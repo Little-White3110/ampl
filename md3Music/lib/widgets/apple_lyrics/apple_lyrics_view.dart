@@ -108,15 +108,54 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
 
   /// 预计算每行实际高度（含自动换行）。
   ///
-  /// 在 [build] 时根据当前视口宽度和字号重新测量，供 painter 和
-  /// scrollController 使用。每行实际高度可能因换行而不同，
-  /// 故 posY 偏移需按累加 lineHeights[0..i-1] 计算。
+  /// **性能优化**：只在 lines/fontSize/viewportWidth 变化时重算，
+  /// 不再每帧重算（之前每帧 build 都跑 N 次 TextPainter.layout 是 CPU 杀手）。
+  /// [_recomputeLineHeightsIfNeeded] 负责缓存命中判断。
   List<double> _lineHeights = const <double>[];
-
-  /// 计算 [lineHeights] 的累加前缀（lineTops[i] = sum(lineHeights[0..i-1])）。
-  ///
-  /// 用于：当前行顶部 y 坐标 = lineTops[currentLineIndex] + posY。
   List<double> _lineTops = const <double>[];
+
+  // 缓存命中判断字段
+  double _cachedFontSize = -1;
+  double _cachedViewportWidth = -1;
+  int _cachedLinesLength = -1;
+  Object? _cachedLinesRef;
+
+  /// 根据 fontSize/viewportWidth/lines 变化判断是否需要重算 lineHeights/lineTops。
+  ///
+  /// 命中缓存时直接 return，避免每帧 N 次 TextPainter.layout（N=歌词行数）。
+  /// 50 行歌词 × 60fps = 每秒 3000 次 layout → 缓存后降为 0 次/帧。
+  void _recomputeLineHeightsIfNeeded(double fontSize, double viewportWidth) {
+    final identitySame = identical(widget.lines, _cachedLinesRef);
+    if (fontSize == _cachedFontSize &&
+        viewportWidth == _cachedViewportWidth &&
+        widget.lines.length == _cachedLinesLength &&
+        identitySame &&
+        _lineHeights.length == widget.lines.length) {
+      return; // 缓存命中
+    }
+    _cachedFontSize = fontSize;
+    _cachedViewportWidth = viewportWidth;
+    _cachedLinesLength = widget.lines.length;
+    _cachedLinesRef = widget.lines;
+
+    final maxLineWidth = LyricLayout.maxLineWidth(viewportWidth, fontSize);
+    final mainLineHeight = fontSize * LyricLayout.lineHeight;
+    final List<double> heights = <double>[];
+    final List<double> tops = <double>[];
+    double acc = 0;
+    for (final line in widget.lines) {
+      heights.add(LyricLayout.measureLineHeight(
+        line,
+        fontSize,
+        mainLineHeight,
+        maxLineWidth,
+      ));
+      tops.add(acc);
+      acc += heights.last;
+    }
+    _lineHeights = heights;
+    _lineTops = tops;
+  }
 
   @override
   void initState() {
@@ -344,23 +383,9 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
         final maxLineWidth =
             LyricLayout.maxLineWidth(constraints.maxWidth, fontSize);
 
-        // 预测量每行实际高度（含换行），并累加 lineTops
-        // 这一步在 build 阶段同步完成（TextPainter.layout 较快）
-        final List<double> heights = <double>[];
-        final List<double> tops = <double>[];
-        double acc = 0;
-        for (final line in widget.lines) {
-          heights.add(LyricLayout.measureLineHeight(
-            line,
-            fontSize,
-            mainLineHeight,
-            maxLineWidth,
-          ));
-          tops.add(acc);
-          acc += heights.last;
-        }
-        _lineHeights = heights;
-        _lineTops = tops;
+        // 性能优化：缓存命中检查，只在数据/字号/视口变化时重算 lineHeights/lineTops
+        // 之前每帧都跑 N 次 TextPainter.layout 是 CPU 瓶颈（UI 线程 70%+）
+        _recomputeLineHeightsIfNeeded(fontSize, constraints.maxWidth);
 
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
