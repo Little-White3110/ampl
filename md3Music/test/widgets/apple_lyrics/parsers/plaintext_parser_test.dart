@@ -51,7 +51,8 @@ void main() {
       expect(result.length, 2);
       for (final line in result) {
         expect(line.words, isEmpty);
-        expect(identical(line.words, const []), isTrue); // 引用相等进行 const []
+        // 引用相等进行 const <LyricWord>[]（类型必须一致才能 identical）
+        expect(identical(line.words, const <LyricWord>[]), isTrue);
         expect(line.hasWordTiming, isFalse);
       }
     });

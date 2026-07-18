@@ -35,7 +35,9 @@ class PlainTextParser {
             startTime: 0,
             duration: 0,
             text: trimmed,
-            words: const [],
+            // 显式标注类型为 List<LyricWord>，确保与外部 `const <LyricWord>[]`
+            // 引用一致（const canonicalization 按运行时类型区分）。
+            words: const <LyricWord>[],
             translation: null,
           ),
         );

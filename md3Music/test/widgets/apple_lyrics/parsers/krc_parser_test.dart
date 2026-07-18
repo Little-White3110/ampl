@@ -198,7 +198,8 @@ random text
       expect(result[1].startTime, 16700);
       expect(result[1].duration, 3800);
       expect(result[1].text, '泣き出したまい');
-      expect(result[1].words, hasLength(6));
+      // 输入字符串含 7 个字标签：泣/き/出/し/た/ま/い
+      expect(result[1].words, hasLength(7));
     });
 
     test('字标签无 property 字段（仅 offset,duration）：能正确解析', () {

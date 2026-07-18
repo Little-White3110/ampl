@@ -278,9 +278,10 @@ void main() {
       }
 
       // 第1行（index=1）中心 y：
-      // targetY = -(1*76.8 + 38.4 - 210) = -(115.2 - 210) = 94.8
-      // 第1行中心 y ≈ 94.8 + 38.4 = 133.2
-      await tester.tapAt(const Offset(400, 133));
+      // posY = targetYForLine(1, 76.8) = -(1*76.8 + 38.4 - 600*0.35) = 94.8
+      // 第1行顶部 y = 1 * lineHeight + posY = 76.8 + 94.8 = 171.6
+      // 第1行中心 y = 171.6 + lineHeight/2 = 171.6 + 38.4 = 210
+      await tester.tapAt(const Offset(400, 210));
       await tester.pump();
 
       expect(seekTime, isNotNull);
