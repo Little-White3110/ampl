@@ -142,9 +142,9 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            ndk;28.2.13676358
-            cmake;3.22.1
+          # packages 参数必须单行空格分隔；多行（|）会被 sdkmanager
+          # 当作单个包名（含换行符）导致 "Failed to find package"。
+          packages: 'ndk;28.2.13676358 cmake;3.22.1'
 
       - name: Print toolchain versions
         run: |
