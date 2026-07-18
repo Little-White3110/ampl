@@ -12,6 +12,8 @@
 /// - [LineScaleController] 仅管理当前行 scale 弹簧，非当前行直接用 inactiveScale
 library;
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
@@ -114,16 +116,30 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   List<double> _lineHeights = const <double>[];
   List<double> _lineTops = const <double>[];
 
-  /// 哪些行索引后面有间奏占位（布局层插入虚拟行，避免点与歌词重叠）。
+  /// 哪些行索引后面有间奏（gap >= thresholdMs）。
   ///
-  /// 方案 A（grill-me 确认）：在 lineTops 紧挨着累加的基础上，
-  /// 检测相邻行 gap >= thresholdMs 的位置，记录该行索引，
-  /// 绘制时在这些行之后额外偏移一个占位高度，间奏点画在占位区域中心。
-  /// 保持 _lineTops/_lineHeights 与 widget.lines 一一对应（长度不变），
-  /// 用 _interludeOffsetBefore 方法计算偏移量，影响所有 y 坐标计算。
+  /// 用于检测当前是否进入间奏时段（_activeInterludeAfterIndex）。
+  /// 注意：只有激活间奏才占位高度（动态展开/收起），非激活间奏占位 = 0。
   List<int> _interludeAfterIndices = const <int>[];
 
-  /// 间奏占位高度（跟随 fontSize 缩放，约 0.5 倍主行高）。
+  /// 当前激活的间奏在 _interludeAfterIndices 中的索引（-1 表示无激活）。
+  ///
+  /// 严格 AMLL 逻辑：只有 currentTime 真正进入间奏时段
+  /// （gapStart < now < gapEnd）才激活占位。
+  /// 一激活就开始 spring 展开 0 → totalHeight，
+  /// 间奏结束（now >= gapEnd）就 spring 收起 totalHeight → 0。
+  int _activeInterludeIdx = -1;
+
+  /// 间奏占位 spring 进度（0 = 完全收起，1 = 完全展开）。
+  ///
+  /// 用指数衰减逼近目标值，目标由 _activeInterludeIdx 决定：
+  /// - 激活：target = 1.0
+  /// - 未激活：target = 0.0
+  /// 每帧 _onTick 中推进：progress += (target - progress) * (1 - exp(-speed * dt))
+  /// speed = 18（300ms 内基本到位）
+  double _interludeExpandProgress = 0;
+
+  /// 间奏占位完全展开后的总高度（含上下 0.4em 边距，跟随 fontSize 缩放）。
   double _interludePlaceholderHeight = 0;
 
   // 缓存命中判断字段
@@ -132,22 +148,20 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   int _cachedLinesLength = -1;
   Object? _cachedLinesRef;
 
-  /// 返回指定行索引上方所有间奏占位的累计高度偏移。
+  /// 返回指定行索引上方所有激活间奏占位的累计高度。
   ///
-  /// 例如：第 5 行之前有 2 个间奏（分别在第 1、3 行之后），
-  /// 则 offset = 2 * _interludePlaceholderHeight。
-  /// 绘制、滚动对齐、tap 找行都需要加这个偏移。
+  /// 只有 _activeInterludeIdx 对应的间奏才占位，
+  /// 高度 = _interludePlaceholderHeight × _interludeExpandProgress。
+  /// 其余间奏占位 = 0。
+  ///
+  /// 注意：激活间奏的 anchorLineIndex < lineIndex 才算"上方"，
+  /// 即占位高度只影响该间奏之后的行。
   double _interludeOffsetBefore(int lineIndex) {
-    if (_interludeAfterIndices.isEmpty) return 0;
-    int count = 0;
-    for (final int idx in _interludeAfterIndices) {
-      if (idx < lineIndex) {
-        count++;
-      } else {
-        break; // 列表已排序，后面都 >= lineIndex
-      }
-    }
-    return count * _interludePlaceholderHeight;
+    if (_activeInterludeIdx < 0 || _interludeAfterIndices.isEmpty) return 0;
+    if (_activeInterludeIdx >= _interludeAfterIndices.length) return 0;
+    final int anchorIdx = _interludeAfterIndices[_activeInterludeIdx];
+    if (anchorIdx >= lineIndex) return 0;
+    return _interludePlaceholderHeight * _interludeExpandProgress;
   }
 
   /// 根据 fontSize/viewportWidth/lines 变化判断是否需要重算 lineHeights/lineTops。
@@ -156,7 +170,7 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   /// 50 行歌词 × 60fps = 每秒 3000 次 layout → 缓存后降为 0 次/帧。
   ///
   /// 同时检测相邻行间隔 >= [LyricLayout.interludeThresholdMs] 的位置，
-  /// 记录到 [_interludeAfterIndices]，绘制时间奏点占 0.5 行高的虚拟空间。
+  /// 记录到 [_interludeAfterIndices]。占位高度动态展开/收起（不在这里固定）。
   void _recomputeLineHeightsIfNeeded(double fontSize, double viewportWidth) {
     final identitySame = identical(widget.lines, _cachedLinesRef);
     if (fontSize == _cachedFontSize &&
@@ -173,8 +187,11 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
 
     final maxLineWidth = LyricLayout.maxLineWidth(viewportWidth, fontSize);
     final mainLineHeight = fontSize * LyricLayout.lineHeight;
-    // 间奏占位高度：0.5 倍主行高，跟随 fontSize 缩放
-    _interludePlaceholderHeight = mainLineHeight * 0.5;
+    // 间奏占位总高度 = 点高度 + 上下 0.4em 边距
+    // 点高度约 2 * dotRadius = 2 * fontSize * 0.08 = 0.16em
+    // 边距 = 0.8em
+    // 总高度约 0.96em，约等于 1 倍主行高
+    _interludePlaceholderHeight = mainLineHeight * 1.0;
     final List<double> heights = <double>[];
     final List<double> tops = <double>[];
     final List<int> interludeIndices = <int>[];
@@ -201,6 +218,9 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     _lineHeights = heights;
     _lineTops = tops;
     _interludeAfterIndices = interludeIndices;
+    // 重置激活间奏（lines 变化时）
+    _activeInterludeIdx = -1;
+    _interludeExpandProgress = 0;
   }
 
   @override
@@ -342,29 +362,55 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     // 5. 间奏检测与推进
     _updateInterlude();
 
-    // 6. 触发重绘
+    // 6. 推进间奏占位 spring（_interludeExpandProgress）
+    // 严格 AMLL：进入间奏时段 spring 展开 0 → 1，离开则 spring 收起 1 → 0
+    // 用指数衰减逼近目标值：progress += (target - progress) * (1 - exp(-speed * dt))
+    // speed = 18 对应 ~300ms 内基本到位（AMLL 视觉过渡感）
+    final double interludeTarget = _activeInterludeIdx >= 0 ? 1.0 : 0.0;
+    const double interludeSpeed = 18.0;
+    _interludeExpandProgress += (interludeTarget - _interludeExpandProgress) *
+        (1 - math.exp(-interludeSpeed * dt));
+    // 收起到接近 0 时直接归零，避免无限逼近占着微小高度
+    if (_activeInterludeIdx < 0 && _interludeExpandProgress < 0.001) {
+      _interludeExpandProgress = 0;
+    }
+
+    // 7. 触发重绘
     setState(() {});
   }
 
-  /// 检测当前行与下一行之间是否构成间奏（间隔 >= 4000ms），更新 [_interludeDots]。
+  /// 检测当前时间是否处于某个间奏时段，更新 [_activeInterludeIdx] 和 [_interludeDots]。
   ///
-  /// 间奏时段：[current.endTime, next.startTime - 250ms]，
-  /// 250ms 提前结束以准备下一行渲染。
+  /// 严格 AMLL 逻辑：遍历所有 [_interludeAfterIndices]，
+  /// 找到第一个满足 `gapStart <= currentTime < gapEnd` 的间奏，
+  /// 设置为激活间奏（占位动态展开 0 → totalHeight）。
+  /// 若无激活，则清除间奏点并收起占位（totalHeight → 0）。
+  ///
+  /// 间奏时段：[line.endTime, next.startTime - interludeEarlyEndMs]，
+  /// 250ms 提前结束以准备下一行渲染（与 AMLL 一致）。
   void _updateInterlude() {
-    if (_currentLineIndex < 0 ||
-        _currentLineIndex >= widget.lines.length - 1) {
-      _interludeDots.clear();
-      return;
+    int foundIdx = -1;
+    int? gapStart;
+    int? gapEnd;
+    for (int i = 0; i < _interludeAfterIndices.length; i++) {
+      final int lineIdx = _interludeAfterIndices[i];
+      if (lineIdx < 0 || lineIdx >= widget.lines.length - 1) continue;
+      final current = widget.lines[lineIdx];
+      final next = widget.lines[lineIdx + 1];
+      final start = current.endTime;
+      final end = next.startTime - LyricLayout.interludeEarlyEndMs;
+      if (widget.currentTimeMs >= start && widget.currentTimeMs < end) {
+        foundIdx = i;
+        gapStart = start;
+        gapEnd = end;
+        break;
+      }
     }
-    final current = widget.lines[_currentLineIndex];
-    final next = widget.lines[_currentLineIndex + 1];
-    final gap = next.startTime - current.endTime;
-    if (gap >= LyricLayout.interludeThresholdMs) {
-      // endTime 已减去 interludeEarlyEndMs，InterludeDots 内部不再二次扣减
-      _interludeDots.setInterlude(
-        current.endTime,
-        next.startTime - LyricLayout.interludeEarlyEndMs,
-      );
+
+    _activeInterludeIdx = foundIdx;
+
+    if (foundIdx >= 0 && gapStart != null && gapEnd != null) {
+      _interludeDots.setInterlude(gapStart, gapEnd);
     } else {
       _interludeDots.clear();
     }
@@ -493,6 +539,8 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
                   interludeDots: _interludeDots,
                   interludeAfterIndices: _interludeAfterIndices,
                   interludePlaceholderHeight: _interludePlaceholderHeight,
+                  activeInterludeIdx: _activeInterludeIdx,
+                  interludeExpandProgress: _interludeExpandProgress,
                 ),
                 size: Size.infinite,
               ),
@@ -538,6 +586,14 @@ class _LyricsPainter extends CustomPainter {
   final List<int> interludeAfterIndices;
   final double interludePlaceholderHeight;
 
+  /// 当前激活间奏在 interludeAfterIndices 中的索引（-1 = 无激活）。
+  /// 只有激活间奏才占位（动态展开/收起），其它间奏占位 = 0。
+  final int activeInterludeIdx;
+
+  /// 间奏占位 spring 进度（0 = 完全收起，1 = 完全展开）。
+  /// 占位高度 = interludePlaceholderHeight * interludeExpandProgress
+  final double interludeExpandProgress;
+
   _LyricsPainter({
     required this.lines,
     required this.currentLineIndex,
@@ -558,6 +614,8 @@ class _LyricsPainter extends CustomPainter {
     required this.interludeDots,
     required this.interludeAfterIndices,
     required this.interludePlaceholderHeight,
+    required this.activeInterludeIdx,
+    required this.interludeExpandProgress,
   });
 
   /// 获取指定行 i 的实际高度（含换行），降级到 mainLineHeight。
@@ -569,18 +627,17 @@ class _LyricsPainter extends CustomPainter {
   double _topOf(int i) =>
       i < lineTops.length ? lineTops[i] : i * mainLineHeight;
 
-  /// 计算指定行索引上方所有间奏占位的累计高度偏移。
+  /// 计算指定行索引上方激活间奏的占位高度。
+  ///
+  /// 严格 AMLL：只有 activeInterludeIdx 对应的间奏才占位，
+  /// 高度 = interludePlaceholderHeight * interludeExpandProgress（动态展开/收起）。
+  /// 占位只影响该间奏 anchor 之后的行（anchorIdx < lineIndex）。
   double _interludeOffsetBefore(int lineIndex) {
-    if (interludeAfterIndices.isEmpty) return 0;
-    int count = 0;
-    for (final int idx in interludeAfterIndices) {
-      if (idx < lineIndex) {
-        count++;
-      } else {
-        break;
-      }
-    }
-    return count * interludePlaceholderHeight;
+    if (activeInterludeIdx < 0 || interludeAfterIndices.isEmpty) return 0;
+    if (activeInterludeIdx >= interludeAfterIndices.length) return 0;
+    final int anchorIdx = interludeAfterIndices[activeInterludeIdx];
+    if (anchorIdx >= lineIndex) return 0;
+    return interludePlaceholderHeight * interludeExpandProgress;
   }
 
   @override
@@ -648,23 +705,31 @@ class _LyricsPainter extends CustomPainter {
     }
 
     // 绘制间奏点（若处于间奏时段）。
-    // 间奏点作为占位行嵌在歌词流里，位于 currentLineIndex 行之后。
-    // 占位区域 = 该行底部 + 该行间奏偏移（因为它在 currentLineIndex 之后），
-    // centerY 居中在占位区域内（高 interludePlaceholderHeight）。
+    // 间奏点作为占位行嵌在歌词流里，位于激活间奏的 anchor 行之后。
+    // 占位高度 = interludePlaceholderHeight * interludeExpandProgress（动态展开/收起）
+    // centerY 居中在占位区域内（动态高度的一半）。
     // 点大小/间距跟随 fontSize 缩放：radius≈fontSize*0.08，spacing≈fontSize*0.4。
-    if (interludeDots.shouldRender && currentLineIndex >= 0) {
-      final double currentLineHeight = _heightOf(currentLineIndex);
-      final double currentLineTop = _topOf(currentLineIndex);
-      // 当前行底部 y（含当前行上方的间奏偏移）
-      final double lineBottomY =
-          currentLineTop + currentLineHeight + _interludeOffsetBefore(currentLineIndex) + posY;
-      // 间奏点占位区域 centerY：从行底部往下 0.5 倍占位高度
-      final double centerY = lineBottomY + interludePlaceholderHeight / 2;
-      // 点半径与间距跟随 fontSize 缩放
-      final double dotRadius = fontSize * 0.08;
-      final double dotSpacing = fontSize * 0.4;
-      interludeDots.paintAtLineY(canvas, startX, centerY,
-          dotRadius: dotRadius, spacing: dotSpacing);
+    if (interludeDots.shouldRender &&
+        activeInterludeIdx >= 0 &&
+        activeInterludeIdx < interludeAfterIndices.length) {
+      final int anchorIdx = interludeAfterIndices[activeInterludeIdx];
+      if (anchorIdx >= 0 && anchorIdx < lines.length) {
+        final double anchorHeight = _heightOf(anchorIdx);
+        final double anchorTop = _topOf(anchorIdx);
+        // anchor 行底部 y（含 anchor 行上方的间奏偏移）
+        final double anchorBottomY =
+            anchorTop + anchorHeight + _interludeOffsetBefore(anchorIdx) + posY;
+        // 占位高度动态展开：0 → interludePlaceholderHeight
+        final double placeholderH =
+            interludePlaceholderHeight * interludeExpandProgress;
+        // 间奏点 centerY 居中在占位区域内
+        final double centerY = anchorBottomY + placeholderH / 2;
+        // 点半径与间距跟随 fontSize 缩放
+        final double dotRadius = fontSize * 0.08;
+        final double dotSpacing = fontSize * 0.4;
+        interludeDots.paintAtLineY(canvas, startX, centerY,
+            dotRadius: dotRadius, spacing: dotSpacing);
+      }
     }
   }
 
