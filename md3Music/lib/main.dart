@@ -9,6 +9,7 @@ import 'app.dart';
 import 'core/services/desktop_lyric_service.dart';
 import 'core/services/media_notification_service.dart';
 import 'services/nodejs_server.dart';
+import 'widgets/apple_lyrics/layout/lyric_preferences.dart';
 
 const String _kBatteryPromptShownKey = 'battery_prompt_shown';
 
@@ -18,6 +19,8 @@ final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('zh_CN');
+  // 加载歌词字号/行间距偏好（从 SharedPreferences）
+  await LyricPreferences.instance.load();
   // 注册通知栏/悬浮窗回调（悬浮窗内按钮 → DesktopLyricService；通知栏桌面歌词按钮 → toggle）
   MediaNotificationService.initCallbacks();
   DesktopLyricService.instance.registerNativeCallbacks();

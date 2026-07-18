@@ -2,29 +2,37 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
+import 'lyric_preferences.dart';
+
 /// Apple Music 风格歌词布局常量
 ///
 /// 参照 spec.md "Requirement: 字号与行距" 与 "行为参数" / "alpha 参数" 章节，
 /// 集中定义所有字号、行距、缩放、弹簧、滚动等布局常量与计算函数。
 ///
-/// 本期目标平台为 Android，字号规则使用移动端 `max(8vw, 12px)`；
-/// 桌面端规则 `max(max(5vh, 2.5vw), 12px)` 暂不实现。
+/// 字号与行距支持用户偏好调节（[LyricPreferences]），不再使用固定值。
+/// 默认字号 15px，默认行间距系数 1.5（可通过设置页滑块或长按菜单调整）。
 class LyricLayout {
   LyricLayout._();
 
   // ============== 字号与行高（主行） ==============
 
-  /// 字号（移动端）：`max(8vw, 12px)`
+  /// 字号：返回用户偏好的字号（[LyricPreferences.fontSize]）。
   ///
-  /// Flutter 中通过 [MediaQuery] 取屏幕宽度乘 0.08，与 12 取 max。
-  /// 1vw = 屏幕宽度 1%，故 8vw = width * 0.08。
+  /// 之前是 `max(8vw, 12px)` 固定公式，导致字号过大且不可调。
+  /// 现在改为从 [LyricPreferences] 读取，默认 15px，范围 12~30px。
+  /// 调用方仍传 [BuildContext]，保留以便未来根据屏幕尺寸自适应缩放。
   static double fontSize(BuildContext context) {
-    final vw = MediaQuery.of(context).size.width * 0.08;
-    return vw > 12 ? vw : 12;
+    return LyricPreferences.instance.fontSize;
   }
 
-  /// 行高：1.2 倍
-  static const double lineHeight = 1.2;
+  /// 行高系数：返回用户偏好行高系数（基于 [LyricPreferences.lineSpacing]）。
+  ///
+  /// 公式：`lineHeight = (fontSize / defaultFontSize) * lineSpacing`
+  /// 例如 fontSize=15, lineSpacing=1.5 → 1.5；
+  /// fontSize=20, lineSpacing=1.0 → (20/15)*1.0 ≈ 1.33。
+  ///
+  /// 之前是固定 1.2，现在支持跟随字号缩放 + 用户调节。
+  static double get lineHeight => LyricPreferences.instance.lineHeightMultiplier;
 
   // ============== 行 wrapper 间距 ==============
 

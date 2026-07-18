@@ -42,6 +42,21 @@ class WordRenderer {
   /// 每个 word index 的当前 alpha 值。
   final Map<int, double> _wordAlphas = <int, double>{};
 
+  /// 每个 word index 的当前 Y 轴偏移（上浮特效）。
+  ///
+  /// AMLL 规范：当前字会轻微上浮（最大约 -3px），用指数衰减平滑过渡。
+  /// 已播字回到 0，未播字保持 0，当前字上浮。
+  final Map<int, double> _wordYOffsets = <int, double>{};
+
+  /// AMLL 上浮最大幅度（px）：当前字最大上浮 -3px。
+  static const double _maxLiftPx = -3.0;
+
+  /// AMLL 上浮 ATTACK 速度：当前字上浮指数衰减系数。
+  static const double _liftAttackSpeed = 30.0;
+
+  /// AMLL 上浮 RELEASE 速度：当前字回落指数衰减系数。
+  static const double _liftReleaseSpeed = 10.0;
+
   // ============== 状态查询 ==============
 
   /// 当前 alpha map（不可变视图，供测试断言）。
@@ -120,7 +135,37 @@ class WordRenderer {
         next = target;
       }
       _wordAlphas[i] = next;
+
+      // AMLL 上浮特效：当前字上浮到 _maxLiftPx，其他字回到 0
+      final double targetY = _targetYOffsetFor(i, wordCount);
+      final double currentY = _wordYOffsets[i] ?? 0;
+      final double ySpeed = targetY >= currentY
+          ? _liftAttackSpeed
+          : _liftReleaseSpeed;
+      final double yDecay = 1.0 - exp(-ySpeed * dt);
+      double nextY = currentY + (targetY - currentY) * yDecay;
+      if ((nextY - targetY).abs() < LyricLayout.alphaEpsilon) {
+        nextY = targetY;
+      }
+      _wordYOffsets[i] = nextY;
     }
+  }
+
+  /// 计算指定 word index 的目标 Y 偏移（上浮特效）。
+  ///
+  /// - 非当前行：所有 word Y=0（不上浮）。
+  /// - 当前行：当前 word Y=_maxLiftPx（上浮），其他 word Y=0。
+  ///   简化实现：不做相邻字波浪感，只当前字上浮。
+  double _targetYOffsetFor(int index, int wordCount) {
+    if (!_isActive) return 0;
+    final double wordPos = _currentLineProgress * wordCount;
+    final int currentIdx = wordPos.floor();
+    if (index == currentIdx) {
+      // 当前 word 内进度 0~1，上浮幅度从 0 → _maxLiftPx 线性
+      final double wp = wordPos - currentIdx;
+      return _maxLiftPx * wp;
+    }
+    return 0;
   }
 
   /// 计算指定 word index 的目标 alpha。
@@ -172,6 +217,8 @@ class WordRenderer {
     for (int i = 0; i < line.words.length; i++) {
       final LyricWord word = line.words[i];
       final double alpha = _wordAlphas[i] ?? dark;
+      // AMLL 上浮特效：当前字 Y 偏移（上浮）
+      final double yOffset = _wordYOffsets[i] ?? 0;
       final TextPainter painter = TextPainter(
         text: TextSpan(
           text: word.text,
@@ -184,7 +231,7 @@ class WordRenderer {
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      painter.paint(canvas, Offset(dx, dy));
+      painter.paint(canvas, Offset(dx, dy + yOffset));
       dx += painter.width;
     }
   }
@@ -216,18 +263,21 @@ class WordRenderer {
     if (identical(_boundLine, line)) return;
     _boundLine = line;
     _wordAlphas.clear();
+    _wordYOffsets.clear();
     final double dark = dynamicDarkAlpha;
     for (int i = 0; i < line.words.length; i++) {
       _wordAlphas[i] = dark;
+      _wordYOffsets[i] = 0;
     }
   }
 
-  /// 重置状态：清空 alpha map、归零 progress、scale 回到 inactive、isActive=false、解绑 line。
+  /// 重置状态：清空 alpha map、Y 偏移、归零 progress、scale 回到 inactive、isActive=false、解绑 line。
   void reset() {
     _isActive = false;
     _scale = LyricLayout.inactiveScale;
     _currentLineProgress = 0.0;
     _boundLine = null;
     _wordAlphas.clear();
+    _wordYOffsets.clear();
   }
 }

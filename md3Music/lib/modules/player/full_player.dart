@@ -166,12 +166,15 @@ class _FullPlayerState extends State<FullPlayer>
     }
   }
 
-  /// 收起为迷你条：弹簧目标设为 0.0，duration 由弹簧自然结束决定。
+  /// 收起为迷你条：直接 Navigator.pop 退出 FullPlayer 路由，让主页常驻的
+  /// MiniPlayer 接管显示。
+  ///
+  /// 之前用弹簧动画 + 内嵌 _buildMiniBar 的方案，会导致 FullPlayer 不出栈，
+  /// 主页 MiniPlayer 与 FullPlayer 内嵌迷你条同时显示（双重 mini player bug）。
+  /// 改为直接 pop：简单可靠，符合 Apple Music 下拉直接收起的行为。
   void _collapse() {
     if (!_isExpanded) return;
-    _isExpanded = false;
-    _expansionSpring.setTarget(0.0);
-    _startSpringAnimation();
+    Navigator.of(context).maybePop();
   }
 
   /// 展开为全屏页：弹簧目标设为 1.0。

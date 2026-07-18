@@ -18,6 +18,7 @@ import 'package:flutter/widgets.dart';
 import 'controllers/line_scale_controller.dart';
 import 'controllers/lyric_scroll_controller.dart';
 import 'layout/lyric_layout.dart';
+import 'layout/lyric_preferences.dart';
 import 'models/lyric_line.dart';
 import 'renderers/emphasize_effect.dart';
 import 'renderers/interlude_dots.dart';
@@ -103,6 +104,8 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
 
   int _currentLineIndex = -1;
   Offset? _tapDownPosition;
+  // 用户垂直拖动累计偏移（用于 onVerticalDragUpdate 调用 scrollController.onUserScroll）
+  double _verticalDragDelta = 0;
 
   @override
   void initState() {
@@ -112,6 +115,16 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     _ticker = createTicker(_onTick);
     _ticker.start();
     _lastElapsed = Duration.zero;
+    // 监听字号/行间距偏好变化，实时刷新（设置页滑块、长按菜单调节后立即生效）
+    LyricPreferences.instance.addListener(_onPreferencesChanged);
+  }
+
+  /// 偏好变化时触发重绘（不需要 setState，因为 _onTick 每帧 setState），
+  /// 但偏好变化时若 ticker 未启动（暂停状态），需要手动 setState 触发一次。
+  void _onPreferencesChanged() {
+    if (!_ticker.isActive) {
+      setState(() {});
+    }
   }
 
   @override
@@ -126,6 +139,7 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   void dispose() {
     _ticker.dispose();
     _scrollController.dispose();
+    LyricPreferences.instance.removeListener(_onPreferencesChanged);
     super.dispose();
   }
 
@@ -244,7 +258,7 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     _interludeDots.tick(widget.currentTimeMs);
   }
 
-  // ============== 点击跳转 ==============
+  // ============== 点击跳转与手动滚动 ==============
 
   void _onTapDown(TapDownDetails details) {
     _tapDownPosition = details.localPosition;
@@ -269,6 +283,33 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     }
   }
 
+  /// 用户垂直拖动歌词：调用 scrollController.onUserScroll 偏移 posY 并重置 5s 回弹倒计时。
+  ///
+  /// 之前只挂了 onTapDown/onTapUp，导致用户无法上下滑动歌词（spec 要求
+  /// 用户滚动后 5s 自动回弹到当前行）。这里补上 onVerticalDragUpdate/End。
+  void _onVerticalDragUpdate(DragUpdateDetails details) {
+    _verticalDragDelta += details.primaryDelta ?? 0;
+    _scrollController.onUserScroll(details.primaryDelta ?? 0);
+  }
+
+  void _onVerticalDragEnd(DragEndDetails details) {
+    _verticalDragDelta = 0;
+    _scrollController.onUserScrollEnd();
+  }
+
+  /// 长按歌词弹出字号/行间距调节菜单（实时反馈）。
+  ///
+  /// 菜单用 showModalBottomSheet，内含两个滑块（字号 12~30，行间距 1.0~2.0），
+  /// 滑动时直接调用 [LyricPreferences.instance.setFontSize] / [setLineSpacing]，
+  /// 由于 AppleLyricsView 监听了 LyricPreferences，字号/行间距变化立即生效。
+  void _onLongPress(LongPressStartDetails details) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => const _LyricPreferencesSheet(),
+    );
+  }
+
   // ============== 构建 ==============
 
   @override
@@ -284,9 +325,15 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
         final lineHeight = fontSize * LyricLayout.lineHeight;
 
         return GestureDetector(
-          behavior: HitTestBehavior.translucent,
+          behavior: HitTestBehavior.opaque,
           onTapDown: _onTapDown,
           onTapUp: _onTapUp,
+          // 挂载垂直拖动手势：用户可上下滑动歌词，5s 后自动回弹到当前行。
+          // 之前缺失这个手势，导致用户完全无法上下滚动歌词。
+          onVerticalDragUpdate: _onVerticalDragUpdate,
+          onVerticalDragEnd: _onVerticalDragEnd,
+          // 长按弹出字号/行间距调节菜单
+          onLongPressStart: _onLongPress,
           child: ClipRect(
             child: CustomPaint(
               painter: _LyricsPainter(
@@ -405,16 +452,99 @@ class _LyricsPainter extends CustomPainter {
     }
 
     // 绘制间奏点（若处于间奏时段）。
-    // InterludeDots.paint 内部会判断是否在间奏时段，非间奏时直接返回。
-    final double centerX = viewportWidth / 2;
-    final double centerY = viewportHeight / 2;
-    // radius=16 为点间距，dotRadius=4 为单点基准半径
-    interludeDots.paint(canvas, Offset(centerX, centerY), 16, 4);
+    // 间奏点作为占位行嵌在歌词流里，位于当前行（currentLineIndex）与下一行之间。
+    // 占位行的 top y = (currentLineIndex + 1) * lineHeight + posY，
+    // 即"下一行歌词顶部"的位置，间奏点绘制在该行的垂直中心。
+    if (interludeDots.shouldRender && currentLineIndex >= 0) {
+      final double centerX = viewportWidth / 2;
+      // 占位行中心 y = 下一行歌词的 top + lineHeight/2
+      final double placeholderTop =
+          (currentLineIndex + 1) * lineHeight + posY;
+      final double centerY = placeholderTop + lineHeight / 2;
+      interludeDots.paintAtLineY(canvas, centerX, centerY,
+          dotRadius: 4, spacing: 16);
+    }
   }
 
   @override
   bool shouldRepaint(covariant _LyricsPainter oldDelegate) {
     // 每帧重绘（动画驱动，setState 每帧调用）
     return true;
+  }
+}
+
+/// 歌词字号/行间距调节面板（长按歌词弹出）。
+///
+/// 用 AnimatedBuilder 监听 [LyricPreferences]，滑动滑块时实时刷新歌词。
+/// 字号范围 12~30px，行间距系数范围 1.0~2.0。
+class _LyricPreferencesSheet extends StatelessWidget {
+  const _LyricPreferencesSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final prefs = LyricPreferences.instance;
+    return AnimatedBuilder(
+      animation: prefs,
+      builder: (context, _) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 标题栏
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      '歌词显示',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    TextButton(
+                      onPressed: () => prefs.reset(),
+                      child: const Text('重置'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                // 字号滑块
+                Text('字号：${prefs.fontSize.round()} px'),
+                Slider(
+                  min: LyricPreferences.minFontSize,
+                  max: LyricPreferences.maxFontSize,
+                  divisions:
+                      (LyricPreferences.maxFontSize -
+                              LyricPreferences.minFontSize)
+                          .round(),
+                  value: prefs.fontSize,
+                  onChanged: prefs.setFontSize,
+                ),
+                const SizedBox(height: 8),
+                // 行间距滑块
+                Text(
+                    '行间距：${prefs.lineSpacing.toStringAsFixed(1)} ×'),
+                Slider(
+                  min: LyricPreferences.minLineSpacing,
+                  max: LyricPreferences.maxLineSpacing,
+                  divisions: ((LyricPreferences.maxLineSpacing -
+                              LyricPreferences.minLineSpacing) *
+                          10)
+                      .round(),
+                  value: prefs.lineSpacing,
+                  onChanged: prefs.setLineSpacing,
+                ),
+                const SizedBox(height: 8),
+                // 实际行高预览
+                Text(
+                  '实际行高倍数：${prefs.lineHeightMultiplier.toStringAsFixed(2)} ×',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 }
