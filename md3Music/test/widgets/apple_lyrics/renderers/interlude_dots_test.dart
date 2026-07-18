@@ -110,14 +110,16 @@ void main() {
       test('enlarging 200ms 后进入 visible', () {
         final dots = InterludeDots();
         dots.setInterlude(10000, 20000);
-        dots.tick(10000); // enlarging start
-        dots.tick(10200); // 200ms 后
+        dots.tick(9000); // preview
+        dots.tick(10000); // enlarging start, _phaseStartMs=10000
+        dots.tick(10200); // 200ms 后 → visible
         expect(dots.phase, equals(InterludePhase.visible));
       });
 
       test('间奏结束进入 shrinking', () {
         final dots = InterludeDots();
         dots.setInterlude(10000, 20000);
+        dots.tick(9000); // preview
         dots.tick(10000); // enlarging
         dots.tick(10200); // visible
         dots.tick(20000); // shrinking
@@ -127,10 +129,11 @@ void main() {
       test('shrinking 400ms 后进入 collapsed', () {
         final dots = InterludeDots();
         dots.setInterlude(10000, 20000);
-        dots.tick(10000);
-        dots.tick(10200);
-        dots.tick(20000); // shrinking
-        dots.tick(20400); // 400ms 后
+        dots.tick(9000); // preview
+        dots.tick(10000); // enlarging
+        dots.tick(10200); // visible
+        dots.tick(20000); // shrinking, _phaseStartMs=20000
+        dots.tick(20400); // 400ms 后 → collapsed
         expect(dots.phase, equals(InterludePhase.collapsed));
         expect(dots.shouldRender, isFalse);
       });
@@ -140,6 +143,7 @@ void main() {
         dots.setInterlude(10000, 20000);
         dots.tick(7000); // preview
         expect(dots.currentScale(7000), equals(1.0));
+        dots.tick(10000); // enlarging
         dots.tick(10200); // visible
         expect(dots.currentScale(10200), equals(1.2));
         dots.clear();
@@ -149,7 +153,8 @@ void main() {
       test('enlarging 阶段 scale 从 1.0 线性到 1.2', () {
         final dots = InterludeDots();
         dots.setInterlude(10000, 20000);
-        dots.tick(10000); // enlarging start
+        dots.tick(9000); // preview
+        dots.tick(10000); // enlarging start, _phaseStartMs=10000
         // 100ms 后应在 1.0 + 0.2 * 0.5 = 1.1
         final scale = dots.currentScale(10100);
         expect(scale, closeTo(1.1, 0.01));
@@ -158,9 +163,10 @@ void main() {
       test('shrinking 阶段 scale 从 1.2 线性到 0', () {
         final dots = InterludeDots();
         dots.setInterlude(10000, 20000);
-        dots.tick(10000);
-        dots.tick(10200);
-        dots.tick(20000); // shrinking start
+        dots.tick(9000); // preview
+        dots.tick(10000); // enlarging
+        dots.tick(10200); // visible
+        dots.tick(20000); // shrinking start, _phaseStartMs=20000
         // 200ms 后应在 1.2 * (1 - 0.5) = 0.6
         final scale = dots.currentScale(20200);
         expect(scale, closeTo(0.6, 0.01));
