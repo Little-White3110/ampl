@@ -12,6 +12,7 @@
 /// - [LineScaleController] 仅管理当前行 scale 弹簧，非当前行直接用 inactiveScale
 library;
 
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 import 'controllers/line_scale_controller.dart';
