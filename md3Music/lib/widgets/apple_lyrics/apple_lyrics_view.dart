@@ -12,6 +12,7 @@
 /// - [LineScaleController] 仅管理当前行 scale 弹簧，非当前行直接用 inactiveScale
 library;
 
+import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
@@ -104,8 +105,6 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
 
   int _currentLineIndex = -1;
   Offset? _tapDownPosition;
-  // 用户垂直拖动累计偏移（用于 onVerticalDragUpdate 调用 scrollController.onUserScroll）
-  double _verticalDragDelta = 0;
 
   @override
   void initState() {
@@ -288,12 +287,10 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   /// 之前只挂了 onTapDown/onTapUp，导致用户无法上下滑动歌词（spec 要求
   /// 用户滚动后 5s 自动回弹到当前行）。这里补上 onVerticalDragUpdate/End。
   void _onVerticalDragUpdate(DragUpdateDetails details) {
-    _verticalDragDelta += details.primaryDelta ?? 0;
     _scrollController.onUserScroll(details.primaryDelta ?? 0);
   }
 
   void _onVerticalDragEnd(DragEndDetails details) {
-    _verticalDragDelta = 0;
     _scrollController.onUserScrollEnd();
   }
 

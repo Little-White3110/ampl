@@ -1,7 +1,5 @@
 library;
 
-import 'dart:math' as math;
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
@@ -84,7 +82,10 @@ class InterludeDots {
   double fullLineHeight = 0;
 
   /// 当前是否需要绘制（占位行有内容）。
+  ///
+  /// preview 阶段显示静态 1.0 scale 点，也需要绘制。
   bool get shouldRender =>
+      _phase == InterludePhase.preview ||
       _phase == InterludePhase.enlarging ||
       _phase == InterludePhase.visible ||
       _phase == InterludePhase.shrinking;
