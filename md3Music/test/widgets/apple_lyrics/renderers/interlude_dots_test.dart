@@ -98,30 +98,28 @@ void main() {
         expect(dots.shouldRender, isFalse);
       });
 
-      test('间奏开始瞬间进入 enlarging 阶段', () {
+      test('间奏开始瞬间进入 visible 阶段（直接跳过 enlarging）', () {
         final dots = InterludeDots();
         dots.setInterlude(10000, 20000);
         dots.tick(9000); // preview
-        dots.tick(10000); // enlarging
-        expect(dots.phase, equals(InterludePhase.enlarging));
+        dots.tick(10000); // 间奏开始 → visible（v2 删除 enlarging）
+        expect(dots.phase, equals(InterludePhase.visible));
         expect(dots.shouldRender, isTrue);
       });
 
-      test('enlarging 200ms 后进入 visible', () {
+      test('visible 阶段 currentScale=1.0', () {
         final dots = InterludeDots();
         dots.setInterlude(10000, 20000);
         dots.tick(9000); // preview
-        dots.tick(10000); // enlarging start, _phaseStartMs=10000
-        dots.tick(10200); // 200ms 后 → visible
-        expect(dots.phase, equals(InterludePhase.visible));
+        dots.tick(10000); // visible start, _phaseStartMs=10000
+        expect(dots.currentScale(10000), equals(1.0));
       });
 
       test('间奏结束进入 shrinking', () {
         final dots = InterludeDots();
         dots.setInterlude(10000, 20000);
         dots.tick(9000); // preview
-        dots.tick(10000); // enlarging
-        dots.tick(10200); // visible
+        dots.tick(10000); // visible
         dots.tick(20000); // shrinking
         expect(dots.phase, equals(InterludePhase.shrinking));
       });
@@ -130,46 +128,61 @@ void main() {
         final dots = InterludeDots();
         dots.setInterlude(10000, 20000);
         dots.tick(9000); // preview
-        dots.tick(10000); // enlarging
-        dots.tick(10200); // visible
+        dots.tick(10000); // visible
         dots.tick(20000); // shrinking, _phaseStartMs=20000
         dots.tick(20400); // 400ms 后 → collapsed
         expect(dots.phase, equals(InterludePhase.collapsed));
         expect(dots.shouldRender, isFalse);
       });
 
-      test('currentScale：preview=1.0, visible=1.2, hidden=0', () {
+      test('currentScale：preview fade-in 0→1, visible=1.0, hidden=0', () {
         final dots = InterludeDots();
         dots.setInterlude(10000, 20000);
-        dots.tick(7000); // preview
-        expect(dots.currentScale(7000), equals(1.0));
-        dots.tick(10000); // enlarging
-        dots.tick(10200); // visible
-        expect(dots.currentScale(10200), equals(1.2));
+        dots.tick(7000); // preview start, _phaseStartMs=7000
+        // preview 阶段 scale 从 0 → 1.0（300ms fade-in）
+        // 7000+150ms 处 scale ≈ 0.5
+        final previewScale = dots.currentScale(7150);
+        expect(previewScale, closeTo(0.5, 0.05));
+        dots.tick(10000); // visible
+        expect(dots.currentScale(10000), equals(1.0));
         dots.clear();
         expect(dots.currentScale(0), equals(0));
       });
 
-      test('enlarging 阶段 scale 从 1.0 线性到 1.2', () {
+      test('shrinking 阶段 scale 从 1.0 线性到 0', () {
         final dots = InterludeDots();
         dots.setInterlude(10000, 20000);
         dots.tick(9000); // preview
-        dots.tick(10000); // enlarging start, _phaseStartMs=10000
-        // 100ms 后应在 1.0 + 0.2 * 0.5 = 1.1
-        final scale = dots.currentScale(10100);
-        expect(scale, closeTo(1.1, 0.01));
+        dots.tick(10000); // visible
+        dots.tick(20000); // shrinking start, _phaseStartMs=20000
+        // 200ms 后应在 1.0 * (1 - 0.5) = 0.5
+        final scale = dots.currentScale(20200);
+        expect(scale, closeTo(0.5, 0.05));
       });
 
-      test('shrinking 阶段 scale 从 1.2 线性到 0', () {
+      test('AMLL 循环呼吸：dotIntensity 在 0.4~1.0 之间循环', () {
         final dots = InterludeDots();
         dots.setInterlude(10000, 20000);
         dots.tick(9000); // preview
-        dots.tick(10000); // enlarging
-        dots.tick(10200); // visible
-        dots.tick(20000); // shrinking start, _phaseStartMs=20000
-        // 200ms 后应在 1.2 * (1 - 0.5) = 0.6
-        final scale = dots.currentScale(20200);
-        expect(scale, closeTo(0.6, 0.01));
+        dots.tick(10000); // visible start
+        // visible 阶段：intensity 应在 0.4 ~ 1.0 之间
+        for (int i = 0; i < 3; i++) {
+          final intensity = dots.dotIntensity(i, 10000);
+          expect(intensity, greaterThanOrEqualTo(0.4));
+          expect(intensity, lessThanOrEqualTo(1.0));
+        }
+      });
+
+      test('AMLL 循环呼吸：3 个点相位错开', () {
+        final dots = InterludeDots();
+        dots.setInterlude(10000, 20000);
+        dots.tick(10000); // visible
+        // t=0 时 3 个点应有不同亮度（相位 0/120/240）
+        final i0 = dots.dotIntensity(0, 10000);
+        final i1 = dots.dotIntensity(1, 10000);
+        final i2 = dots.dotIntensity(2, 10000);
+        // 三点不应全部相等（除非巧合，但概率极低）
+        expect(i0 == i1 && i1 == i2, isFalse);
       });
     });
 
