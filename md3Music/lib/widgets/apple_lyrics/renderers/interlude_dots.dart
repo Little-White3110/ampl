@@ -74,7 +74,13 @@ class InterludeDots {
 
   int? _startTime;
   int? _endTime;
-  int? _lastTickTime;
+
+  /// 内部动画时钟（ms）—— 由 tick(dt) 推进，不受 positionStream 5fps 限制
+  ///
+  /// **关键**：动画时间用 Ticker 帧时钟（60fps），不用播放时间 currentTimeMs。
+  /// 当 setInterlude 设置新间奏时，_animationTimeMs 重置为 0。
+  /// 每帧 tick(dt) 时 `_animationTimeMs += dt * 1000`。
+  double _animationTimeMs = 0;
 
   /// 当前是否处于间奏时段（由外部 _updateInterlude 设置）。
   bool _isActive = false;
@@ -99,29 +105,36 @@ class InterludeDots {
       _isActive = false;
       _startTime = null;
       _endTime = null;
+      _animationTimeMs = 0;
       return;
     }
-    // 相同间奏不重置（保持 _lastTickTime 等状态，避免每帧重置）
+    // 相同间奏不重置（保持 _animationTimeMs 等状态，避免每帧重置）
     if (_startTime == startTime && _endTime == endTime && _isActive) {
       return;
     }
     _startTime = startTime;
     _endTime = endTime;
     _isActive = true;
+    // 新间奏开始，重置动画时钟
+    _animationTimeMs = 0;
   }
 
   void clear() {
     _startTime = null;
     _endTime = null;
-    _lastTickTime = null;
+    _animationTimeMs = 0;
     _isActive = false;
   }
 
   // ============== 时间推进 ==============
 
-  /// 推进时间（保存当前时间供 paint 时使用）。
-  void tick(int currentTimeMs) {
-    _lastTickTime = currentTimeMs;
+  /// 推进动画时钟（由 _onTick 每帧调用，基于 Ticker elapsed）。
+  ///
+  /// **关键**：用 dt（帧间隔秒）推进内部时钟，不用 currentTimeMs。
+  /// 这样动画始终 60fps 流畅，不受 positionStream 5fps 限制。
+  void tick(double dt) {
+    if (!_isActive) return;
+    _animationTimeMs += dt * 1000;
   }
 
   bool isInterlude(int currentTimeMs) {
@@ -172,19 +185,22 @@ class InterludeDots {
 
   // ============== 绘制 ==============
 
-  /// 绘制 3 个间奏点。
+  /// 绘制 3 个间奏点（整体缩放版）。
   ///
   /// 动画时间线（用户确认版本）：
   /// - 入场：前 400ms easeOutBack scale 0→1（带超出回弹）
   /// - 全程：呼吸缩放（微幅 sin 波动）
-  /// - 消失：最后 750ms easeOutBack scale 1→0（带超出回弹先放大再缩小）
+  /// - 消失：最后 750ms easeInBack scale 1→0（先放大 10% 再缩小到 0）
   /// - opacity：前 200ms 渐显，最后 400ms 渐隐
   /// - 3 点错开亮起：dotsDuration = interludeDuration - 750
+  ///
+  /// **整体缩放**：以第 2 个点圆心为中心，用 canvas.save() + translate + scale
+  /// 实现整体缩放，3 个点作为整体放大/缩小，而非各自独立缩放。
   ///
   /// [startX]：左对齐起点（与歌词 startX 一致）
   /// [centerY]：占位区域的中心 y 坐标
   /// [dotRadius]：单点基准半径
-  /// [spacing]：点间距
+  /// [spacing]：点间距（点圆心到圆心）
   void paintAtLineY(
     Canvas canvas,
     double startX,
@@ -195,11 +211,10 @@ class InterludeDots {
     if (!_isActive) return;
     final start = _startTime;
     final end = _endTime;
-    final now = _lastTickTime;
-    if (start == null || end == null || now == null) return;
+    if (start == null || end == null) return;
 
     final int interludeDuration = end - start;
-    final int currentDuration = now - start;
+    final double currentDuration = _animationTimeMs;
 
     // 超过间奏时段，不绘制
     if (currentDuration > interludeDuration) return;
@@ -232,7 +247,7 @@ class InterludeDots {
     // - t=0：1（保持原 scale）
     // - t=0.5：1 - (-0.1) = 1.1（放大 10%）
     // - t=1：1 - 1 = 0（完全消失）
-    final int remaining = interludeDuration - currentDuration;
+    final double remaining = interludeDuration - currentDuration;
     if (remaining < _exitScaleMs) {
       final double t = (_exitScaleMs - remaining) / _exitScaleMs;
       scale *= 1.0 - _easeInBack(t);
@@ -247,11 +262,21 @@ class InterludeDots {
     final double dotsDuration =
         _clampPositive((interludeDuration - _exitScaleMs).toDouble());
 
-    // 不再乘 0.7（让点更大）
     scale = _clampPositive(scale);
     if (scale <= 0 || globalOpacity <= 0) return;
 
-    final double r = dotRadius * scale;
+    // ===== 整体缩放：以第 2 个点圆心为中心 =====
+    // 3 个点的相对位置（相对第 2 个点圆心）：
+    //   dot0: (-spacing, 0)
+    //   dot1: (0, 0)  ← 中心
+    //   dot2: (+spacing, 0)
+    // 第 2 个点圆心绝对位置：startX + spacing + dotRadius（左对齐 + 1 间距 + 半径）
+    final double centerX = startX + spacing + dotRadius;
+    final double centerY2 = centerY;
+
+    canvas.save();
+    canvas.translate(centerX, centerY2);
+    canvas.scale(scale);
 
     for (int i = 0; i < 3; i++) {
       // dot0: currentDuration * 3 / dotsDuration * 0.75 + 0.25 (clamp 0.25~1)
@@ -264,13 +289,16 @@ class InterludeDots {
 
       if (alpha <= 0) continue;
 
-      final double dx = startX + i * spacing + r;
-      final double dy = centerY;
+      // 相对中心点的 x 偏移：-spacing, 0, +spacing
+      final double dx = (i - 1) * spacing;
+      final double dy = 0.0;
       final paint = Paint()
         ..style = PaintingStyle.fill
         ..color = Color.fromRGBO(255, 255, 255, alpha);
-      canvas.drawCircle(Offset(dx, dy), r, paint);
+      canvas.drawCircle(Offset(dx, dy), dotRadius, paint);
     }
+
+    canvas.restore();
   }
 
   /// 兼容旧接口 [paint]，转发到 [paintAtLineY]。

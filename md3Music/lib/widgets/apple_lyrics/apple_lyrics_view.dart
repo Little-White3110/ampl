@@ -365,7 +365,10 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     // 5. 间奏检测与推进
     _updateInterlude();
 
-    // 6. 推进间奏占位 spring（_interludeExpandProgress）
+    // 6. 推进间奏点动画时钟（基于帧 dt，60fps 流畅，不受 positionStream 5fps 限制）
+    _interludeDots.tick(dt);
+
+    // 7. 推进间奏占位 spring（_interludeExpandProgress）
     // 严格 AMLL：进入间奏时段 spring 展开 0 → 1，离开则 spring 收起 1 → 0
     // 用指数衰减逼近目标值：progress += (target - progress) * (1 - exp(-speed * dt))
     // speed = 18 对应 ~300ms 内基本到位（AMLL 视觉过渡感）
@@ -378,7 +381,7 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
       _interludeExpandProgress = 0;
     }
 
-    // 7. 触发重绘
+    // 8. 触发重绘
     setState(() {});
   }
 
@@ -417,7 +420,8 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     } else {
       _interludeDots.clear();
     }
-    _interludeDots.tick(widget.currentTimeMs);
+    // 注意：间奏点动画时间由 _onTick 中的 _interludeDots.tick(dt) 推进，
+    // 不依赖 currentTimeMs（positionStream 5fps 太卡）
   }
 
   // ============== 点击跳转与手动滚动 ==============
@@ -729,7 +733,7 @@ class _LyricsPainter extends CustomPainter {
         final double centerY = anchorBottomY + placeholderH / 2;
         // 点半径与间距跟随 fontSize 缩放（AMLL 风格：直径约 6-8px @ fontSize=24）
         final double dotRadius = fontSize * 0.18;
-        final double dotSpacing = fontSize * 0.5;
+        final double dotSpacing = fontSize * 0.9;
         interludeDots.paintAtLineY(canvas, startX, centerY,
             dotRadius: dotRadius, spacing: dotSpacing);
       }

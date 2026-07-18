@@ -12,8 +12,8 @@ void main() {
       expect(dots.isInterlude(5000), isFalse);
       expect(dots.shouldRender, isFalse);
       // tick 不抛异常即可（返回 void）
-      dots.tick(0);
-      dots.tick(5000);
+      dots.tick(0.016);
+      dots.tick(0.1);
     });
 
     group('设置间奏后 (start=1000, end=7000)', () {
@@ -26,14 +26,15 @@ void main() {
       setUp(() {
         dots = InterludeDots();
         dots.setInterlude(start, end);
-        dots.tick(start); // 推进到间奏开始时刻
+        // 推进 1 帧（16ms）使动画时钟启动
+        dots.tick(0.016);
       });
 
       test('setInterlude 后 shouldRender=true', () {
         expect(dots.shouldRender, isTrue);
       });
 
-      test('间奏时段内 isInterlude 返回 true', () {
+      test('间奏时段内 isInterlude 返回 true（基于 currentTimeMs 判定）', () {
         expect(dots.isInterlude(1000), isTrue);
         expect(dots.isInterlude(3000), isTrue);
         expect(dots.isInterlude(6999), isTrue);
@@ -55,7 +56,7 @@ void main() {
       test('clear 后 isInterlude 返回 false，shouldRender=false', () {
         final dots = InterludeDots();
         dots.setInterlude(1000, 7000);
-        dots.tick(3000);
+        dots.tick(0.016);
         expect(dots.isInterlude(3000), isTrue);
         expect(dots.shouldRender, isTrue);
 
@@ -72,11 +73,11 @@ void main() {
       test('重新设置后旧时段失效，新时段生效', () {
         final dots = InterludeDots();
         dots.setInterlude(1000, 7000);
-        dots.tick(3000);
+        dots.tick(0.016);
         expect(dots.isInterlude(3000), isTrue);
 
         dots.setInterlude(10000, 20000);
-        dots.tick(15000);
+        dots.tick(0.016);
         expect(dots.isInterlude(3000), isFalse);
         expect(dots.isInterlude(15000), isTrue);
       });
@@ -84,8 +85,10 @@ void main() {
       test('相同间奏重复调用 setInterlude 不重置（幂等）', () {
         final dots = InterludeDots();
         dots.setInterlude(1000, 7000);
-        dots.tick(3000);
-        // 再次设置相同间奏，shouldRender 仍为 true
+        dots.tick(0.016);
+        // 推进一段时间
+        dots.tick(0.5);
+        // 再次设置相同间奏，shouldRender 仍为 true，且动画时钟不重置
         dots.setInterlude(1000, 7000);
         expect(dots.shouldRender, isTrue);
         expect(dots.isInterlude(3000), isTrue);
@@ -94,7 +97,7 @@ void main() {
       test('setInterlude(null, null) 清除间奏', () {
         final dots = InterludeDots();
         dots.setInterlude(1000, 7000);
-        dots.tick(3000);
+        dots.tick(0.016);
         expect(dots.shouldRender, isTrue);
 
         dots.setInterlude(null, null);
@@ -112,7 +115,7 @@ void main() {
         expect(gap, greaterThanOrEqualTo(LyricLayout.interludeThresholdMs));
 
         dots.setInterlude(currentEnd, nextStart - LyricLayout.interludeEarlyEndMs);
-        dots.tick(currentEnd);
+        dots.tick(0.016);
         expect(dots.isInterlude(currentEnd), isTrue);
         expect(dots.isInterlude(nextStart - LyricLayout.interludeEarlyEndMs - 1), isTrue);
         expect(dots.isInterlude(nextStart - LyricLayout.interludeEarlyEndMs), isFalse);
