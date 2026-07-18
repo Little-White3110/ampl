@@ -85,6 +85,10 @@ class LyricScrollController {
   /// [isSeeking] 为 true 时使用固定弹簧参数（stiffness=90, damping=15）；
   /// 为 false 时使用动态参数（基于 [intervalMs]）。
   ///
+  /// [isInterludeActive] 为 true 时使用更柔和的弹簧参数（stiffness=40, damping=10），
+  /// 让间奏结束时歌词跟随占位收起更柔软（约 500ms 到位而非瞬移）。
+  /// 优先级：isSeeking > isInterludeActive > 普通模式。
+  ///
   /// [intervalMs] 为下一行 startTime - 当前行 endTime，仅 [isSeeking]=false
   /// 时用于计算动态 stiffness。会被 clamp 到 [100, 800]。
   ///
@@ -104,11 +108,12 @@ class LyricScrollController {
     required double lineHeight,
     int intervalMs = 0,
     double lineTop = -1,
+    bool isInterludeActive = false,
   }) {
     _currentLineIndex = index;
     _currentLineHeight = lineHeight;
     _currentLineTop = lineTop >= 0 ? lineTop : index * lineHeight;
-    _applySpringParams(isSeeking, intervalMs);
+    _applySpringParams(isSeeking, intervalMs, isInterludeActive);
     // 用户滚动期间不强制 setTarget，等 5s 倒计时结束后自动回弹到最新行
     if (!_isUserScrolling && _autoReturned) {
       final double targetY = targetYForLine(index, lineHeight, lineTop: lineTop);
@@ -118,13 +123,20 @@ class LyricScrollController {
 
   /// 应用弹簧参数
   ///
-  /// seeking/间奏模式：固定 stiffness=90, damping=15。
-  /// 普通模式：stiffness = LyricLayout.posYNormalStiffness(intervalMs)，
-  /// damping = LyricLayout.posYNormalDamping(stiffness)。
-  void _applySpringParams(bool isSeeking, int intervalMs) {
+  /// 优先级：seeking > 间奏 > 普通。
+  /// - seeking 模式：固定 stiffness=90, damping=15
+  /// - 间奏模式：固定 stiffness=40, damping=10（更柔和，跟随占位收起）
+  /// - 普通模式：stiffness = LyricLayout.posYNormalStiffness(intervalMs)，
+  ///   damping = LyricLayout.posYNormalDamping(stiffness)
+  void _applySpringParams(bool isSeeking, int intervalMs,
+      [bool isInterludeActive = false]) {
     if (isSeeking) {
       _currentStiffness = LyricLayout.posYSeekingStiffness;
       _currentDamping = LyricLayout.posYSeekingDamping;
+    } else if (isInterludeActive) {
+      // 间奏模式：更柔和的弹簧，让歌词跟随占位收起时有阻尼感
+      _currentStiffness = 40;
+      _currentDamping = 10;
     } else {
       _currentStiffness = LyricLayout.posYNormalStiffness(intervalMs);
       _currentDamping = LyricLayout.posYNormalDamping(_currentStiffness);
@@ -239,7 +251,7 @@ class LyricScrollController {
   /// [isSeeking]=true 使用固定参数（90, 15）；
   /// false 使用普通模式默认参数（intervalMs=0 → clamp 到 100，stiffness=220）。
   void setSeekingMode(bool isSeeking) {
-    _applySpringParams(isSeeking, 0);
+    _applySpringParams(isSeeking, 0, false);
   }
 
   /// 释放资源

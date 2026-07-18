@@ -318,6 +318,9 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
         lineHeight: currentLineHeight,
         intervalMs: intervalMs,
         lineTop: currentLineTop,
+        // 间奏激活时用更柔和的 spring（stiffness=40, damping=10），
+        // 让歌词跟随占位收起时有阻尼感而非瞬移
+        isInterludeActive: _activeInterludeIdx >= 0,
       );
     }
     _scrollController.tick(dt);
@@ -724,9 +727,9 @@ class _LyricsPainter extends CustomPainter {
             interludePlaceholderHeight * interludeExpandProgress;
         // 间奏点 centerY 居中在占位区域内
         final double centerY = anchorBottomY + placeholderH / 2;
-        // 点半径与间距跟随 fontSize 缩放
-        final double dotRadius = fontSize * 0.08;
-        final double dotSpacing = fontSize * 0.4;
+        // 点半径与间距跟随 fontSize 缩放（AMLL 风格：直径约 6-8px @ fontSize=24）
+        final double dotRadius = fontSize * 0.18;
+        final double dotSpacing = fontSize * 0.5;
         interludeDots.paintAtLineY(canvas, startX, centerY,
             dotRadius: dotRadius, spacing: dotSpacing);
       }

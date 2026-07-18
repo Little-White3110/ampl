@@ -45,20 +45,20 @@ class InterludeDots {
   /// AMLL 标准呼吸周期（ms）
   static const int _targetBreatheDuration = 1500;
 
-  /// 入场缩放时长（ms）
-  static const int _enterScaleMs = 2000;
+  /// 入场缩放时长（ms）—— easeOutBack 超出回弹
+  static const int _enterScaleMs = 400;
 
   /// globalOpacity 前 N ms 全黑
-  static const int _opacityHideMs = 500;
+  static const int _opacityHideMs = 0;
 
   /// globalOpacity 渐显时长（ms）
-  static const int _opacityFadeMs = 1000;
+  static const int _opacityFadeMs = 200;
 
-  /// 消失缩放时长（ms）
+  /// 消失缩放时长（ms）—— easeOutBack 带回弹
   static const int _exitScaleMs = 750;
 
   /// globalOpacity 渐隐时长（ms）
-  static const int _opacityFadeOutMs = 375;
+  static const int _opacityFadeOutMs = 400;
 
   /// 3 个点的相位错开角度（弧度）：0, 2π/3, 4π/3。
   static final List<double> dotPhases = [
@@ -139,6 +139,30 @@ class InterludeDots {
     return 1.0 - math.pow(2, -10 * x).toDouble();
   }
 
+  /// easeOutBack（带超出回弹）
+  /// 公式：1 + c3 * (x-1)^3 + c1 * (x-1)^2，c1=1.70158, c3=c1+1=2.70158
+  /// x=0 → 0, x=1 → 1, 中间会超出 1 再回弹到 1
+  static double _easeOutBack(double x) {
+    if (x <= 0.0) return 0.0;
+    if (x >= 1.0) return 1.0;
+    const double c1 = 1.70158;
+    const double c3 = c1 + 1.0;
+    final double t = x - 1.0;
+    return 1.0 + c3 * t * t * t + c1 * t * t;
+  }
+
+  /// easeInBack（带负 overshoot）
+  /// 公式：c3 * x^3 - c1 * x^2，c1=1.70158, c3=c1+1=2.70158
+  /// x=0 → 0, x=1 → 1, 中间会先变负（低于 0）再上升到 1
+  /// 用于消失动画：1 - easeInBack(t) 中间会 >1（先放大），t=1 时 → 0
+  static double _easeInBack(double x) {
+    if (x <= 0.0) return 0.0;
+    if (x >= 1.0) return 1.0;
+    const double c1 = 1.70158;
+    const double c3 = c1 + 1.0;
+    return c3 * x * x * x - c1 * x * x;
+  }
+
   /// easeInOutBack（AMLL 原版公式）
   static double _easeInOutBack(double x) {
     const double c1 = 1.70158;
@@ -164,11 +188,18 @@ class InterludeDots {
 
   // ============== 绘制 ==============
 
-  /// 绘制 3 个间奏点（严格 AMLL 公式）。
+  /// 绘制 3 个间奏点。
+  ///
+  /// 动画时间线（用户确认版本）：
+  /// - 入场：前 400ms easeOutBack scale 0→1（带超出回弹）
+  /// - 全程：呼吸缩放（微幅 sin 波动）
+  /// - 消失：最后 750ms easeOutBack scale 1→0（带超出回弹先放大再缩小）
+  /// - opacity：前 200ms 渐显，最后 400ms 渐隐
+  /// - 3 点错开亮起：dotsDuration = interludeDuration - 750
   ///
   /// [startX]：左对齐起点（与歌词 startX 一致）
   /// [centerY]：占位区域的中心 y 坐标
-  /// [dotRadius]：单点基准半径（AMLL 公式中再乘 0.7）
+  /// [dotRadius]：单点基准半径
   /// [spacing]：点间距
   void paintAtLineY(
     Canvas canvas,
@@ -189,7 +220,7 @@ class InterludeDots {
     // 超过间奏时段，不绘制
     if (currentDuration > interludeDuration) return;
 
-    // ===== 1. 整体呼吸缩放 =====
+    // ===== 1. 整体呼吸缩放（微幅 sin 波动）=====
     final int breatheDuration = (interludeDuration ~/
             math.max(1, (interludeDuration / _targetBreatheDuration).ceil()))
         .clamp(1, interludeDuration);
@@ -198,12 +229,12 @@ class InterludeDots {
                 (currentDuration / breatheDuration) * 2) /
             20;
 
-    // ===== 2. 入场缩放（前 2000ms）=====
+    // ===== 2. 入场缩放（前 400ms easeOutBack 超出回弹）=====
     if (currentDuration < _enterScaleMs) {
-      scale *= _easeOutExpo(currentDuration / _enterScaleMs);
+      scale *= _easeOutBack(currentDuration / _enterScaleMs);
     }
 
-    // ===== 3. globalOpacity =====
+    // ===== 3. globalOpacity（前 200ms 渐显）=====
     double globalOpacity = 1.0;
     if (currentDuration < _opacityHideMs) {
       globalOpacity = 0;
@@ -212,14 +243,18 @@ class InterludeDots {
           (_opacityFadeMs - _opacityHideMs);
     }
 
-    // ===== 4. 消失缩放（最后 750ms）=====
+    // ===== 4. 消失缩放（最后 750ms：先稍微放大再缩小到 0）=====
+    // 用 1 - easeInBack(t)：
+    // - t=0：1（保持原 scale）
+    // - t=0.5：1 - (-0.1) = 1.1（放大 10%）
+    // - t=1：1 - 1 = 0（完全消失）
     final int remaining = interludeDuration - currentDuration;
     if (remaining < _exitScaleMs) {
-      scale *= 1.0 -
-          _easeInOutBack((_exitScaleMs - remaining) / _exitScaleMs / 2);
+      final double t = (_exitScaleMs - remaining) / _exitScaleMs;
+      scale *= 1.0 - _easeInBack(t);
     }
 
-    // ===== 5. globalOpacity 渐隐（最后 375ms）=====
+    // ===== 5. globalOpacity 渐隐（最后 400ms）=====
     if (remaining < _opacityFadeOutMs) {
       globalOpacity *= _clamp01(remaining / _opacityFadeOutMs);
     }
@@ -228,8 +263,8 @@ class InterludeDots {
     final double dotsDuration =
         _clampPositive((interludeDuration - _exitScaleMs).toDouble());
 
-    // 最终 scale 再乘 0.7（AMLL 标准缩放系数）
-    scale = _clampPositive(scale) * 0.7;
+    // 不再乘 0.7（让点更大）
+    scale = _clampPositive(scale);
     if (scale <= 0 || globalOpacity <= 0) return;
 
     final double r = dotRadius * scale;
