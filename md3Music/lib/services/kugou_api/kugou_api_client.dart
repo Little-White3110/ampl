@@ -1731,13 +1731,14 @@ class KugouApiClient {
     String songName, {
     String? albumAudioId,
   }) async {
+    final params = <String, dynamic>{
+      'hash': hash,
+      'songname': songName,
+    };
+    if (albumAudioId != null) params['album_audio_id'] = albumAudioId;
     return await _get(
       KugouEndpoints.playhistoryUpload,
-      queryParameters: {
-        'hash': hash,
-        'songname': songName,
-        'album_audio_id': ?albumAudioId,
-      },
+      queryParameters: params,
     );
   }
 
