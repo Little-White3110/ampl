@@ -133,12 +133,6 @@ class InterludeDots {
 
   // ============== 缓动函数 ==============
 
-  /// easeOutExpo: `x == 1 ? 1 : 1 - 2^(-10*x)`
-  static double _easeOutExpo(double x) {
-    if (x >= 1.0) return 1.0;
-    return 1.0 - math.pow(2, -10 * x).toDouble();
-  }
-
   /// easeOutBack（带超出回弹）
   /// 公式：1 + c3 * (x-1)^3 + c1 * (x-1)^2，c1=1.70158, c3=c1+1=2.70158
   /// x=0 → 0, x=1 → 1, 中间会超出 1 再回弹到 1
@@ -161,16 +155,6 @@ class InterludeDots {
     const double c1 = 1.70158;
     const double c3 = c1 + 1.0;
     return c3 * x * x * x - c1 * x * x;
-  }
-
-  /// easeInOutBack（AMLL 原版公式）
-  static double _easeInOutBack(double x) {
-    const double c1 = 1.70158;
-    final double c2 = c1 * 1.525;
-    if (x < 0.5) {
-      return (math.pow(2 * x, 2) * ((c2 + 1) * 2 * x - c2)) / 2;
-    }
-    return (math.pow(2 * x - 2, 2) * ((c2 + 1) * (x * 2 - 2) + c2) + 2) / 2;
   }
 
   /// clamp01
