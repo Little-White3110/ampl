@@ -130,6 +130,13 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   /// 间奏结束（now >= gapEnd）就 spring 收起 totalHeight → 0。
   int _activeInterludeIdx = -1;
 
+  /// 最后激活的间奏 anchor 行索引（-1 表示从未激活过）。
+  ///
+  /// 用于间奏结束后 progress 收起期间继续计算占位偏移，
+  /// 避免 `_interludeOffsetBefore` 在间奏一结束就立即返回 0 导致 targetY 突变。
+  /// 当 `_interludeExpandProgress` 收起到 0 后重置为 -1。
+  int _lastActiveAnchorIdx = -1;
+
   /// 间奏占位 spring 进度（0 = 完全收起，1 = 完全展开）。
   ///
   /// 用指数衰减逼近目标值，目标由 _activeInterludeIdx 决定：
@@ -150,17 +157,18 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
 
   /// 返回指定行索引上方所有激活间奏占位的累计高度。
   ///
-  /// 只有 _activeInterludeIdx 对应的间奏才占位，
-  /// 高度 = _interludePlaceholderHeight × _interludeExpandProgress。
-  /// 其余间奏占位 = 0。
+  /// **progress 驱动**：只要 `_interludeExpandProgress > 0` 就返回占位高度，
+  /// 不依赖 `_activeInterludeIdx`。这样间奏结束后 progress 缓慢收起到 0 期间，
+  /// 占位偏移也跟随平滑收起，posY target 不会突变。
   ///
-  /// 注意：激活间奏的 anchorLineIndex < lineIndex 才算"上方"，
-  /// 即占位高度只影响该间奏之后的行。
+  /// 使用 `_lastActiveAnchorIdx` 记录最后激活的间奏 anchor，
+  /// 避免影响其他未激活间奏的占位。
+  ///
+  /// 高度 = _interludePlaceholderHeight × _interludeExpandProgress
   double _interludeOffsetBefore(int lineIndex) {
-    if (_activeInterludeIdx < 0 || _interludeAfterIndices.isEmpty) return 0;
-    if (_activeInterludeIdx >= _interludeAfterIndices.length) return 0;
-    final int anchorIdx = _interludeAfterIndices[_activeInterludeIdx];
-    if (anchorIdx >= lineIndex) return 0;
+    if (_interludeExpandProgress <= 0) return 0;
+    final int anchorIdx = _lastActiveAnchorIdx;
+    if (anchorIdx < 0 || anchorIdx >= lineIndex) return 0;
     return _interludePlaceholderHeight * _interludeExpandProgress;
   }
 
@@ -220,6 +228,7 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     _interludeAfterIndices = interludeIndices;
     // 重置激活间奏（lines 变化时）
     _activeInterludeIdx = -1;
+    _lastActiveAnchorIdx = -1;
     _interludeExpandProgress = 0;
   }
 
@@ -318,9 +327,9 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
         lineHeight: currentLineHeight,
         intervalMs: intervalMs,
         lineTop: currentLineTop,
-        // 间奏激活时用更柔和的 spring（stiffness=40, damping=10），
+        // 间奏激活或占位还在收起时都用柔和 spring（stiffness=40, damping=10），
         // 让歌词跟随占位收起时有阻尼感而非瞬移
-        isInterludeActive: _activeInterludeIdx >= 0,
+        isInterludeActive: _interludeExpandProgress > 0.01,
       );
     }
     _scrollController.tick(dt);
@@ -394,6 +403,12 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   ///
   /// 间奏时段：[line.endTime, next.startTime - interludeEarlyEndMs]，
   /// 250ms 提前结束以准备下一行渲染（与 AMLL 一致）。
+  ///
+  /// **间奏点同步收起**：间奏结束后不立即 `clear()` 间奏点，
+  /// 让 `_animationTimeMs` 继续推进到 `interludeDuration`，
+  /// 间奏点会自然完成消失动画（最后 750ms easeInBack 缩小）。
+  /// 占位收起与点消失同步进行（都是 ~300-750ms）。
+  /// 只有当 `_interludeExpandProgress` 收起到 0 后才 `clear()` 间奏点状态。
   void _updateInterlude() {
     int foundIdx = -1;
     int? gapStart;
@@ -417,8 +432,19 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
 
     if (foundIdx >= 0 && gapStart != null && gapEnd != null) {
       _interludeDots.setInterlude(gapStart, gapEnd);
+      // 记录最后激活的 anchor 行索引（用于间奏结束后继续计算占位偏移）
+      if (foundIdx < _interludeAfterIndices.length) {
+        _lastActiveAnchorIdx = _interludeAfterIndices[foundIdx];
+      }
     } else {
-      _interludeDots.clear();
+      // 间奏结束：不立即 clear() 间奏点
+      // 让 _animationTimeMs 继续推进到 interludeDuration，
+      // 间奏点会自然完成消失动画（最后 750ms easeInBack）
+      // 只有当 _interludeExpandProgress 收起到 0 后才 clear()
+      if (_interludeExpandProgress <= 0.001) {
+        _interludeDots.clear();
+        _lastActiveAnchorIdx = -1;
+      }
     }
     // 注意：间奏点动画时间由 _onTick 中的 _interludeDots.tick(dt) 推进，
     // 不依赖 currentTimeMs（positionStream 5fps 太卡）
@@ -547,6 +573,7 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
                   interludeAfterIndices: _interludeAfterIndices,
                   interludePlaceholderHeight: _interludePlaceholderHeight,
                   activeInterludeIdx: _activeInterludeIdx,
+                  lastActiveAnchorIdx: _lastActiveAnchorIdx,
                   interludeExpandProgress: _interludeExpandProgress,
                 ),
                 size: Size.infinite,
@@ -597,6 +624,11 @@ class _LyricsPainter extends CustomPainter {
   /// 只有激活间奏才占位（动态展开/收起），其它间奏占位 = 0。
   final int activeInterludeIdx;
 
+  /// 最后激活的间奏 anchor 行索引（-1 = 从未激活过）。
+  ///
+  /// 用于间奏结束后 progress 收起期间继续计算占位偏移。
+  final int lastActiveAnchorIdx;
+
   /// 间奏占位 spring 进度（0 = 完全收起，1 = 完全展开）。
   /// 占位高度 = interludePlaceholderHeight * interludeExpandProgress
   final double interludeExpandProgress;
@@ -622,6 +654,7 @@ class _LyricsPainter extends CustomPainter {
     required this.interludeAfterIndices,
     required this.interludePlaceholderHeight,
     required this.activeInterludeIdx,
+    required this.lastActiveAnchorIdx,
     required this.interludeExpandProgress,
   });
 
@@ -636,14 +669,18 @@ class _LyricsPainter extends CustomPainter {
 
   /// 计算指定行索引上方激活间奏的占位高度。
   ///
-  /// 严格 AMLL：只有 activeInterludeIdx 对应的间奏才占位，
-  /// 高度 = interludePlaceholderHeight * interludeExpandProgress（动态展开/收起）。
-  /// 占位只影响该间奏 anchor 之后的行（anchorIdx < lineIndex）。
+  /// **progress 驱动**：只要 `interludeExpandProgress > 0` 就返回占位高度，
+  /// 不依赖 `activeInterludeIdx`。这样间奏结束后 progress 缓慢收起到 0 期间，
+  /// 占位偏移也跟随平滑收起，posY target 不会突变。
+  ///
+  /// 使用 `lastActiveAnchorIdx` 记录最后激活的间奏 anchor，
+  /// 避免影响其他未激活间奏的占位。
+  ///
+  /// 高度 = interludePlaceholderHeight * interludeExpandProgress
   double _interludeOffsetBefore(int lineIndex) {
-    if (activeInterludeIdx < 0 || interludeAfterIndices.isEmpty) return 0;
-    if (activeInterludeIdx >= interludeAfterIndices.length) return 0;
-    final int anchorIdx = interludeAfterIndices[activeInterludeIdx];
-    if (anchorIdx >= lineIndex) return 0;
+    if (interludeExpandProgress <= 0) return 0;
+    final int anchorIdx = lastActiveAnchorIdx;
+    if (anchorIdx < 0 || anchorIdx >= lineIndex) return 0;
     return interludePlaceholderHeight * interludeExpandProgress;
   }
 
@@ -711,32 +748,33 @@ class _LyricsPainter extends CustomPainter {
       canvas.restore();
     }
 
-    // 绘制间奏点（若处于间奏时段）。
+    // 绘制间奏点（若处于间奏时段或间奏结束后收起期间）。
     // 间奏点作为占位行嵌在歌词流里，位于激活间奏的 anchor 行之后。
     // 占位高度 = interludePlaceholderHeight * interludeExpandProgress（动态展开/收起）
     // centerY 居中在占位区域内（动态高度的一半）。
-    // 点大小/间距跟随 fontSize 缩放：radius≈fontSize*0.08，spacing≈fontSize*0.4。
+    // 点大小/间距跟随 fontSize 缩放：radius≈fontSize*0.18，spacing≈fontSize*0.9。
+    //
+    // **同步收起**：间奏结束后 progress 收起期间也绘制间奏点，
+    // 让点消失动画与占位收起同步（都是 ~300-750ms）。
     if (interludeDots.shouldRender &&
-        activeInterludeIdx >= 0 &&
-        activeInterludeIdx < interludeAfterIndices.length) {
-      final int anchorIdx = interludeAfterIndices[activeInterludeIdx];
-      if (anchorIdx >= 0 && anchorIdx < lines.length) {
-        final double anchorHeight = _heightOf(anchorIdx);
-        final double anchorTop = _topOf(anchorIdx);
-        // anchor 行底部 y（含 anchor 行上方的间奏偏移）
-        final double anchorBottomY =
-            anchorTop + anchorHeight + _interludeOffsetBefore(anchorIdx) + posY;
-        // 占位高度动态展开：0 → interludePlaceholderHeight
-        final double placeholderH =
-            interludePlaceholderHeight * interludeExpandProgress;
-        // 间奏点 centerY 居中在占位区域内
-        final double centerY = anchorBottomY + placeholderH / 2;
-        // 点半径与间距跟随 fontSize 缩放（AMLL 风格：直径约 6-8px @ fontSize=24）
-        final double dotRadius = fontSize * 0.18;
-        final double dotSpacing = fontSize * 0.9;
-        interludeDots.paintAtLineY(canvas, startX, centerY,
-            dotRadius: dotRadius, spacing: dotSpacing);
-      }
+        lastActiveAnchorIdx >= 0 &&
+        lastActiveAnchorIdx < lines.length) {
+      final int anchorIdx = lastActiveAnchorIdx;
+      final double anchorHeight = _heightOf(anchorIdx);
+      final double anchorTop = _topOf(anchorIdx);
+      // anchor 行底部 y（含 anchor 行上方的间奏偏移）
+      final double anchorBottomY =
+          anchorTop + anchorHeight + _interludeOffsetBefore(anchorIdx) + posY;
+      // 占位高度动态展开：0 → interludePlaceholderHeight
+      final double placeholderH =
+          interludePlaceholderHeight * interludeExpandProgress;
+      // 间奏点 centerY 居中在占位区域内
+      final double centerY = anchorBottomY + placeholderH / 2;
+      // 点半径与间距跟随 fontSize 缩放（AMLL 风格：直径约 6-8px @ fontSize=24）
+      final double dotRadius = fontSize * 0.18;
+      final double dotSpacing = fontSize * 0.9;
+      interludeDots.paintAtLineY(canvas, startX, centerY,
+          dotRadius: dotRadius, spacing: dotSpacing);
     }
   }
 
