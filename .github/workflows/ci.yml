@@ -180,11 +180,18 @@ jobs:
           done
 
           # 下载 Node.js v18 头文件（nodejs-mobile 基于 Node.js 18）
+          # tarball 结构：node-v18.20.4/include/node/{node.h, cpp/, openssl/, uv/, ...}
+          # 之前用 --strip-components=1 提取到 cpp/include/node/ 会得到
+          # cpp/include/node/include/node/node.h（路径错误），导致 CMake 找不到 node.h。
+          # 改为：先解压到 /tmp，再把 include/node/ 子目录复制到目标位置。
           echo "==> 下载 Node.js v18 头文件"
-          mkdir -p android/app/src/main/cpp/include/node
+          mkdir -p /tmp/node-headers
           curl -L --fail \
             "https://nodejs.org/dist/v18.20.4/node-v18.20.4-headers.tar.gz" \
-            | tar xz --strip-components=1 -C android/app/src/main/cpp/include/node
+            | tar xz -C /tmp/node-headers
+          mkdir -p android/app/src/main/cpp/include
+          cp -r /tmp/node-headers/node-v18.20.4/include/node \
+            android/app/src/main/cpp/include/
 
           echo "==> 校验 jniLibs 与 cpp/include"
           ls android/app/src/main/jniLibs/*/
