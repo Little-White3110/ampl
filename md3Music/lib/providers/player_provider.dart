@@ -786,7 +786,7 @@ class PlayerProvider extends ChangeNotifier {
     // Check favorite status from FavoritesProvider via global context
     bool isFavorited = false;
     try {
-      final ctx = appNavigatorKey?.currentContext;
+      final ctx = appNavigatorKey.currentContext;
       if (ctx != null) {
         isFavorited = ctx.read<FavoritesProvider>().isFavorite(song.id);
       }

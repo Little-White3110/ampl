@@ -76,7 +76,9 @@ jobs:
           fi
 
       - name: flutter analyze
-        run: flutter analyze
+        # --no-fatal-infos：info 级别（如 avoid_print）不导致 CI 失败，
+        # 仅 error 与 warning 会中断流水线。项目存在大量调试 print，待逐步替换为 logger。
+        run: flutter analyze --no-fatal-infos
 
       - name: dart format --set-exit-if-changed (report only)
         continue-on-error: true

@@ -36,9 +36,6 @@ class LyricScrollController {
   /// 当前行高度（用于自动回弹时计算 targetY）
   double _currentLineHeight = 0;
 
-  /// 是否处于 seeking/间奏模式
-  bool _isSeeking = false;
-
   /// 用户是否正在拖动
   bool _isUserScrolling = false;
 
@@ -94,7 +91,6 @@ class LyricScrollController {
   }) {
     _currentLineIndex = index;
     _currentLineHeight = lineHeight;
-    _isSeeking = isSeeking;
     _applySpringParams(isSeeking, intervalMs);
     final double targetY = targetYForLine(index, lineHeight);
     _posYSpring.setTarget(targetY);
@@ -200,7 +196,6 @@ class LyricScrollController {
   /// [isSeeking]=true 使用固定参数（90, 15）；
   /// false 使用普通模式默认参数（intervalMs=0 → clamp 到 100，stiffness=220）。
   void setSeekingMode(bool isSeeking) {
-    _isSeeking = isSeeking;
     _applySpringParams(isSeeking, 0);
   }
 

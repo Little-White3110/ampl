@@ -103,7 +103,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
 
         if (list != null && list.isNotEmpty) {
           // 调试：打印每个歌单的原始字段，帮助确认过滤条件
-          for (final item in list!) {
+          for (final item in list) {
             final j = item as Map<String, dynamic>;
             debugPrint(
               '[Playlist] name=${j['specialname'] ?? j['name']} | '
