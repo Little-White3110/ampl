@@ -114,16 +114,49 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   List<double> _lineHeights = const <double>[];
   List<double> _lineTops = const <double>[];
 
+  /// 哪些行索引后面有间奏占位（布局层插入虚拟行，避免点与歌词重叠）。
+  ///
+  /// 方案 A（grill-me 确认）：在 lineTops 紧挨着累加的基础上，
+  /// 检测相邻行 gap >= thresholdMs 的位置，记录该行索引，
+  /// 绘制时在这些行之后额外偏移一个占位高度，间奏点画在占位区域中心。
+  /// 保持 _lineTops/_lineHeights 与 widget.lines 一一对应（长度不变），
+  /// 用 _interludeOffsetBefore 方法计算偏移量，影响所有 y 坐标计算。
+  List<int> _interludeAfterIndices = const <int>[];
+
+  /// 间奏占位高度（跟随 fontSize 缩放，约 0.5 倍主行高）。
+  double _interludePlaceholderHeight = 0;
+
   // 缓存命中判断字段
   double _cachedFontSize = -1;
   double _cachedViewportWidth = -1;
   int _cachedLinesLength = -1;
   Object? _cachedLinesRef;
 
+  /// 返回指定行索引上方所有间奏占位的累计高度偏移。
+  ///
+  /// 例如：第 5 行之前有 2 个间奏（分别在第 1、3 行之后），
+  /// 则 offset = 2 * _interludePlaceholderHeight。
+  /// 绘制、滚动对齐、tap 找行都需要加这个偏移。
+  double _interludeOffsetBefore(int lineIndex) {
+    if (_interludeAfterIndices.isEmpty) return 0;
+    int count = 0;
+    for (final int idx in _interludeAfterIndices) {
+      if (idx < lineIndex) {
+        count++;
+      } else {
+        break; // 列表已排序，后面都 >= lineIndex
+      }
+    }
+    return count * _interludePlaceholderHeight;
+  }
+
   /// 根据 fontSize/viewportWidth/lines 变化判断是否需要重算 lineHeights/lineTops。
   ///
   /// 命中缓存时直接 return，避免每帧 N 次 TextPainter.layout（N=歌词行数）。
   /// 50 行歌词 × 60fps = 每秒 3000 次 layout → 缓存后降为 0 次/帧。
+  ///
+  /// 同时检测相邻行间隔 >= [LyricLayout.interludeThresholdMs] 的位置，
+  /// 记录到 [_interludeAfterIndices]，绘制时间奏点占 0.5 行高的虚拟空间。
   void _recomputeLineHeightsIfNeeded(double fontSize, double viewportWidth) {
     final identitySame = identical(widget.lines, _cachedLinesRef);
     if (fontSize == _cachedFontSize &&
@@ -140,10 +173,14 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
 
     final maxLineWidth = LyricLayout.maxLineWidth(viewportWidth, fontSize);
     final mainLineHeight = fontSize * LyricLayout.lineHeight;
+    // 间奏占位高度：0.5 倍主行高，跟随 fontSize 缩放
+    _interludePlaceholderHeight = mainLineHeight * 0.5;
     final List<double> heights = <double>[];
     final List<double> tops = <double>[];
+    final List<int> interludeIndices = <int>[];
     double acc = 0;
-    for (final line in widget.lines) {
+    for (int i = 0; i < widget.lines.length; i++) {
+      final line = widget.lines[i];
       heights.add(LyricLayout.measureLineHeight(
         line,
         fontSize,
@@ -152,9 +189,18 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
       ));
       tops.add(acc);
       acc += heights.last;
+      // 检测当前行与下一行之间是否有间奏（最后一行后面无间奏）
+      if (i < widget.lines.length - 1) {
+        final next = widget.lines[i + 1];
+        final gap = next.startTime - line.endTime;
+        if (gap >= LyricLayout.interludeThresholdMs) {
+          interludeIndices.add(i);
+        }
+      }
     }
     _lineHeights = heights;
     _lineTops = tops;
+    _interludeAfterIndices = interludeIndices;
   }
 
   @override
@@ -232,10 +278,12 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
       final currentLineHeight = (_currentLineIndex < _lineHeights.length
               ? _lineHeights[_currentLineIndex]
               : mainLineHeight);
-      // 当前行顶部 y（前面所有行高度的累加）
-      final currentLineTop = (_currentLineIndex < _lineTops.length
+      // 当前行顶部 y（前面所有行高度的累加 + 间奏占位偏移）
+      final currentLineRawTop = (_currentLineIndex < _lineTops.length
               ? _lineTops[_currentLineIndex]
               : _currentLineIndex * mainLineHeight);
+      final currentLineTop =
+          currentLineRawTop + _interludeOffsetBefore(_currentLineIndex);
       // intervalMs = 下一行 startTime - 当前行 endTime，用于动态 stiffness
       int intervalMs = 0;
       if (_currentLineIndex < widget.lines.length - 1) {
@@ -338,13 +386,14 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     if (delta >= LyricLayout.clickThresholdPx) return;
 
     // 计算点击 y 对应的行索引：用预计算的 lineTops（支持非均匀行高）
-    // 找第一个 lineTops[i+1] + posY > clickY 的 i（即 clickY 落在第 i 行内）
+    // 每行的实际 top = lineTops[i] + _interludeOffsetBefore(i)，
+    // 找第一个 (lineTops[i+1] + interludeOffset) + posY > clickY 的 i（即 clickY 落在第 i 行内）
     final posY = _scrollController.posY;
     final relativeY = details.localPosition.dy - posY;
     if (_lineTops.isEmpty) return;
     int index = -1;
     for (int i = 0; i < _lineTops.length; i++) {
-      final top = _lineTops[i];
+      final top = _lineTops[i] + _interludeOffsetBefore(i);
       final height = _lineHeights.length > i ? _lineHeights[i] : 0;
       if (relativeY >= top && relativeY < top + height) {
         index = i;
@@ -442,6 +491,8 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
                   scaleController: _scaleController,
                   emphasizeEffect: _emphasizeEffect,
                   interludeDots: _interludeDots,
+                  interludeAfterIndices: _interludeAfterIndices,
+                  interludePlaceholderHeight: _interludePlaceholderHeight,
                 ),
                 size: Size.infinite,
               ),
@@ -484,6 +535,8 @@ class _LyricsPainter extends CustomPainter {
   final LineScaleController scaleController;
   final EmphasizeEffect emphasizeEffect;
   final InterludeDots interludeDots;
+  final List<int> interludeAfterIndices;
+  final double interludePlaceholderHeight;
 
   _LyricsPainter({
     required this.lines,
@@ -503,6 +556,8 @@ class _LyricsPainter extends CustomPainter {
     required this.scaleController,
     required this.emphasizeEffect,
     required this.interludeDots,
+    required this.interludeAfterIndices,
+    required this.interludePlaceholderHeight,
   });
 
   /// 获取指定行 i 的实际高度（含换行），降级到 mainLineHeight。
@@ -510,8 +565,23 @@ class _LyricsPainter extends CustomPainter {
       i < lineHeights.length ? lineHeights[i] : mainLineHeight;
 
   /// 获取指定行 i 的顶部 y（累加偏移），降级到 i * mainLineHeight。
+  /// 不包含间奏占位偏移。
   double _topOf(int i) =>
       i < lineTops.length ? lineTops[i] : i * mainLineHeight;
+
+  /// 计算指定行索引上方所有间奏占位的累计高度偏移。
+  double _interludeOffsetBefore(int lineIndex) {
+    if (interludeAfterIndices.isEmpty) return 0;
+    int count = 0;
+    for (final int idx in interludeAfterIndices) {
+      if (idx < lineIndex) {
+        count++;
+      } else {
+        break;
+      }
+    }
+    return count * interludePlaceholderHeight;
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -521,12 +591,12 @@ class _LyricsPainter extends CustomPainter {
     for (int i = 0; i < lines.length; i++) {
       final line = lines[i];
       final double lineHeight = _heightOf(i);
-      // 行顶部 y 坐标 = lineTops[i] + posY（非均匀行高累加）
-      final double y = _topOf(i) + posY;
+      // 行顶部 y 坐标 = lineTops[i] + 该行上方间奏占位偏移 + posY
+      final double y = _topOf(i) + _interludeOffsetBefore(i) + posY;
 
       // 跳过视口外（含 overscan=300px 上下缓冲）的行，避免不必要的绘制
       if (y + lineHeight < -LyricLayout.overscanPx) continue;
-      if (y > viewportHeight + LyricLayout.overscanPx) continue;
+      if (y > viewportHeight + LyricLayout.overscanPx) break;
 
       final bool isActive = i == currentLineIndex;
       // 当前行用 LineScaleController 的弹簧 scale，非当前行用 inactiveScale
@@ -578,18 +648,23 @@ class _LyricsPainter extends CustomPainter {
     }
 
     // 绘制间奏点（若处于间奏时段）。
-    // 间奏点作为占位行嵌在歌词流里，位于当前行（currentLineIndex）与下一行之间。
-    // 占位行的 top y = lineTops[currentLineIndex] + lineHeight + posY，
-    // 3 个点跟歌词一样左对齐到 startX。
+    // 间奏点作为占位行嵌在歌词流里，位于 currentLineIndex 行之后。
+    // 占位区域 = 该行底部 + 该行间奏偏移（因为它在 currentLineIndex 之后），
+    // centerY 居中在占位区域内（高 interludePlaceholderHeight）。
+    // 点大小/间距跟随 fontSize 缩放：radius≈fontSize*0.08，spacing≈fontSize*0.4。
     if (interludeDots.shouldRender && currentLineIndex >= 0) {
       final double currentLineHeight = _heightOf(currentLineIndex);
       final double currentLineTop = _topOf(currentLineIndex);
-      // 间奏点位于当前行之下的"虚拟下一行"位置
-      final double placeholderTop =
-          currentLineTop + currentLineHeight + posY;
-      final double centerY = placeholderTop + mainLineHeight / 2;
+      // 当前行底部 y（含当前行上方的间奏偏移）
+      final double lineBottomY =
+          currentLineTop + currentLineHeight + _interludeOffsetBefore(currentLineIndex) + posY;
+      // 间奏点占位区域 centerY：从行底部往下 0.5 倍占位高度
+      final double centerY = lineBottomY + interludePlaceholderHeight / 2;
+      // 点半径与间距跟随 fontSize 缩放
+      final double dotRadius = fontSize * 0.08;
+      final double dotSpacing = fontSize * 0.4;
       interludeDots.paintAtLineY(canvas, startX, centerY,
-          dotRadius: 4, spacing: 16);
+          dotRadius: dotRadius, spacing: dotSpacing);
     }
   }
 
