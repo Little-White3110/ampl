@@ -216,7 +216,11 @@ class PlayerProvider extends ChangeNotifier {
                 .where((s) => s.id != currentSong?.id)
                 .toList();
             remaining.shuffle();
-            _playlist = [?currentSong, ...remaining];
+            // currentSong 可能为 null，使用 collection-if 条件添加
+            _playlist = [
+              if (currentSong != null) currentSong,
+              ...remaining,
+            ];
             _currentIndex = 0;
           } else {
             _currentIndex = 0;
@@ -671,7 +675,11 @@ class PlayerProvider extends ChangeNotifier {
           .where((s) => s.id != currentSong?.id)
           .toList();
       remaining.shuffle();
-      _playlist = [?currentSong, ...remaining];
+      // currentSong 可能为 null，使用 collection-if 条件添加
+      _playlist = [
+        if (currentSong != null) currentSong,
+        ...remaining,
+      ];
       _currentIndex = 0;
     } else {
       final currentSong = _currentSong;
