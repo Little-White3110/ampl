@@ -1,0 +1,228 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# CI 产物写入 Release 与 Artifact 所需权限
+permissions:
+  contents: write
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================
+  # Job 1: 静态分析 + 单元测试
+  # ============================================================
+  analyze-and-test:
+    name: Analyze & Test (Flutter)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: md3Music
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.12.x'
+          cache: true
+
+      - name: Print Flutter version
+        run: flutter --version
+
+      - name: Fetch pub dependencies
+        run: flutter pub get
+
+      - name: Verify no banned dependencies（TTML / WebView / xml 包）
+        run: |
+          set -e
+          echo "==> 检查 pubspec.yaml 是否引入了 TTML / WebView / xml 等不应有的依赖"
+          if grep -Ei "^\s*(xml|webview_flutter|flutter_inappwebview):" pubspec.yaml; then
+            echo "❌ 检测到禁用依赖"; exit 1
+          else
+            echo "✅ 未发现禁用依赖"
+          fi
+
+      - name: Verify no banned symbols in lib/
+        run: |
+          set -e
+          echo "==> 检查 lib/ 下是否出现 TTML / WebView / package:xml 引用"
+          if grep -rEn "TTML|ttml|WebView|webview_flutter|package:xml" lib/; then
+            echo "❌ lib/ 下检测到禁用符号"; exit 1
+          else
+            echo "✅ lib/ 下未发现禁用符号"
+          fi
+
+      - name: flutter analyze
+        run: flutter analyze
+
+      - name: dart format --set-exit-if-changed (report only)
+        continue-on-error: true
+        run: dart format --set-exit-if-changed lib/ test/
+
+      - name: Run unit tests
+        run: flutter test --coverage --reporter expanded
+
+      - name: Upload coverage to artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: md3Music/coverage/
+          if-no-files-found: ignore
+
+      - name: Publish test report to PR check
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Flutter Test Results
+          path: 'md3Music/build/test-results/**/TEST-*.xml'
+          reporter: java-junit
+          path-replace-backslashes: true
+
+  # ============================================================
+  # Job 2: 构建 Release APK（split-per-abi）
+  # ============================================================
+  build-apk:
+    name: Build APK (${{ matrix.abi }})
+    needs: analyze-and-test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+    defaults:
+      run:
+        working-directory: md3Music
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.12.x'
+          cache: true
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            ndk;28.2.13676358
+            cmake;3.22.1
+
+      - name: Print toolchain versions
+        run: |
+          flutter --version
+          echo "--- NDK ---"
+          ls "$ANDROID_NDK_HOME" || true
+          echo "--- CMAKE ---"
+          ls "$ANDROID_HOME/cmake/3.22.1/bin" || true
+
+      - name: Fetch pub dependencies
+        run: flutter pub get
+
+      - name: Download nodejs-mobile native libs (libnode.so)
+        shell: bash
+        run: |
+          set -e
+          echo "==> 下载 native-libs.zip（来自 md3Music 上游 Release）"
+          curl -L --fail -o native-libs.zip \
+            "https://github.com/zzyoxml/md3Music/releases/latest/download/native-libs.zip"
+          echo "==> 解压到 android/app/src/main/"
+          unzip -o native-libs.zip -d android/app/src/main/
+          echo "==> 校验 jniLibs 与 cpp/include"
+          ls android/app/src/main/jniLibs || { echo "jniLibs 缺失"; exit 1; }
+          ls android/app/src/main/cpp/include 2>/dev/null || echo "(warn) cpp/include 不存在"
+
+      - name: Build APK for ${{ matrix.abi }}
+        run: |
+          flutter build apk --release --split-per-abi --target-platform android-${{ matrix.abi == 'arm64-v8a' && 'arm64' || matrix.abi == 'armeabi-v7a' && 'arm' || 'x64' }}
+
+      - name: Rename APK
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          APK_PATH="build/app/outputs/flutter-apk/app-${{ matrix.abi }}-release.apk"
+          if [ -f "$APK_PATH" ]; then
+            cp "$APK_PATH" "md3music-${{ matrix.abi }}-release.apk"
+            cp "$APK_PATH" "artifacts/md3music-${{ matrix.abi }}-release.apk"
+            ls -la "md3music-${{ matrix.abi }}-release.apk"
+          else
+            echo "❌ APK 不存在: $APK_PATH"; exit 1
+          fi
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: md3music-apk-${{ matrix.abi }}
+          path: md3Music/md3music-${{ matrix.abi }}-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach APK to Release（tag 触发时）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          draft: false
+          prerelease: false
+          files: md3Music/md3music-${{ matrix.abi }}-release.apk
+          name: Release ${{ github.ref_name }}
+
+  # ============================================================
+  # Job 3: 汇总打包结果（便于一次性下载全部 ABI）
+  # ============================================================
+  bundle-apks:
+    name: Bundle All APKs
+    needs: build-apk
+    runs-on: ubuntu-22.04
+    if: always() && needs.build-apk.result == 'success'
+    steps:
+      - name: Download all APK artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: md3music-apk-*
+          merge-multiple: true
+          path: all-apks
+
+      - name: List & zip
+        run: |
+          ls -la all-apks/
+          cd all-apks && zip -q md3music-all-apks.zip *.apk && ls -la
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: md3music-all-apks
+          path: all-apks/md3music-all-apks.zip
+          retention-days: 30

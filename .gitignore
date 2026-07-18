@@ -1,0 +1,55 @@
+# ===== 根仓库（ampl）专用忽略规则 =====
+# 注意：md3Music/ 内部仍保留它自己的 .gitignore（适用于该子目录）
+
+# IDE / AI 工具
+.vscode/
+.idea/
+*.iml
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.bak
+*.old
+_tmp*/
+
+# ===== md3Music 子目录构建产物 =====
+md3Music/build/
+md3Music/.dart_tool/
+md3Music/.flutter-plugins
+md3Music/.flutter-plugins-dependencies
+md3Music/.pub-cache/
+md3Music/.pub/
+md3Music/coverage/
+
+# Node.js（嵌入式服务器构建产物）
+md3Music/node_modules/
+md3Music/kugou_api_server/node_modules/
+md3Music/kugou_api_server/server.log
+md3Music/networkapi/node_modules/
+
+# nodejs-mobile Native 库（由 setup_native.bat 下载，体积大不入库）
+md3Music/android/app/src/main/cpp/include/
+md3Music/android/app/src/main/jniLibs/
+md3Music/native-libs.zip
+
+# Android 构建中间产物
+md3Music/android/app/debug/
+md3Music/android/app/profile/
+md3Music/android/app/release/
+md3Music/android/.gradle/
+md3Music/android/build/
+md3Music/android/app/build/
+
+# 符号 / 混淆
+md3Music/app.*.symbols
+md3Music/app.*.map.json
+
+# ===== 保留：规范文档 =====
+# .trae/specs/ 内含 spec.md / tasks.md / checklist.md，需纳入版本控制
+!.trae/
+!.trae/specs/
+!.trae/specs/**

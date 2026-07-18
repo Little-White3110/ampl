@@ -1,0 +1,61 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Node.js SDK (nodejs-mobile) - third-party dependencies
+/android/app/src/main/cpp/include/
+/android/app/src/main/jniLibs/
+node_modules/
+kugou_api_server/node_modules/
+kugou_api_server/server.log
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Temporary files
+_tmp*/
+*.tmp
+*.bak
+*.old
+native-libs.zip
+
+# IDE/AI tool configs
+.mimicode/
+.trae/
+.workbuddy/
+.vscode/
+.mimocode/plans/1783171865901-quick-cactus.md

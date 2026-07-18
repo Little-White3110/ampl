@@ -1,0 +1,419 @@
+/// Apple Music 风格歌词主组件
+///
+/// 参照 spec.md "Requirement: 点击跳转" 与 tasks.md Task 17 实现。
+/// 接收已解析的 [LyricLine] 列表与播放状态，集成所有渲染器与控制器，
+/// 通过 [CustomPainter] 绘制 Apple Music 风格的逐字 / 整行歌词。
+///
+/// 设计要点：
+/// - 解析由调用方完成（[LyricParserChain.parse]），本组件只接收 [lines]
+/// - 用 [Ticker] + [SingleTickerProviderStateMixin] 每帧推进
+///   所有控制器与渲染器，触发 [setState] 重绘
+/// - 每行独立的 renderer 实例（按行索引缓存），避免多行共用导致状态混乱
+/// - [LineScaleController] 仅管理当前行 scale 弹簧，非当前行直接用 inactiveScale
+library;
+
+import 'package:flutter/widgets.dart';
+
+import 'controllers/line_scale_controller.dart';
+import 'controllers/lyric_scroll_controller.dart';
+import 'layout/lyric_layout.dart';
+import 'models/lyric_line.dart';
+import 'renderers/emphasize_effect.dart';
+import 'renderers/interlude_dots.dart';
+import 'renderers/line_renderer.dart';
+import 'renderers/word_renderer.dart';
+
+/// Apple Music 风格歌词主组件。
+///
+/// 调用方负责通过 [LyricParserChain.parse] 解析得到 [lines]，本组件不再解析。
+/// 内部用 [Ticker] + [SingleTickerProviderStateMixin] 驱动每帧
+/// [tick] 推进所有控制器与渲染器，调用 [setState] 触发重绘。
+class AppleLyricsView extends StatefulWidget {
+  /// 已解析的歌词行列表（由调用方通过 LyricParserChain.parse 得到）
+  final List<LyricLine> lines;
+
+  /// 当前播放时间（毫秒）
+  final int currentTimeMs;
+
+  /// 是否正在播放
+  final bool isPlaying;
+
+  /// 用户点击某行后回调（调用方应调用 just_audio.seek）
+  final void Function(int timeMs)? onSeek;
+
+  /// 是否启用缩放（默认 true）
+  final bool enableScale;
+
+  const AppleLyricsView({
+    super.key,
+    required this.lines,
+    required this.currentTimeMs,
+    this.isPlaying = false,
+    this.onSeek,
+    this.enableScale = true,
+  });
+
+  /// 找到当前应高亮的行索引：最后一个 `startTime <= currentTimeMs` 的行。
+  ///
+  /// 抽象为静态方法便于单元测试。空列表返回 -1；时间早于第一行返回 0。
+  @visibleForTesting
+  static int findCurrentLineIndex(List<LyricLine> lines, int currentTimeMs) {
+    if (lines.isEmpty) return -1;
+    for (int i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].startTime <= currentTimeMs) return i;
+    }
+    return 0;
+  }
+
+  @override
+  State<AppleLyricsView> createState() => _AppleLyricsViewState();
+}
+
+class _AppleLyricsViewState extends State<AppleLyricsView>
+    with SingleTickerProviderStateMixin {
+  // ============== 动画驱动 ==============
+  //
+  // 使用 Ticker（而非 AnimationController.addListener + DateTime.now()）驱动每帧，
+  // 因为 Ticker 的回调参数 [Duration elapsed] 基于调度器时钟（测试中为模拟时间），
+  // 保证单元测试中 pump(Duration) 能正确推进弹簧动画。
+  // AnimationController.addListener + DateTime.now() 在测试中会用真实墙钟时间，
+  // 导致弹簧几乎不推进，测试无法验证动画行为。
+
+  late final Ticker _ticker;
+  Duration _lastElapsed = Duration.zero;
+
+  // ============== 控制器与效果 ==============
+
+  final LyricScrollController _scrollController = LyricScrollController();
+  final LineScaleController _scaleController = LineScaleController();
+  final InterludeDots _interludeDots = InterludeDots();
+  final EmphasizeEffect _emphasizeEffect = EmphasizeEffect();
+
+  /// 每行独立的 [WordRenderer] 缓存（按行索引）。
+  ///
+  /// WordRenderer 内部检测 line 切换并维护 alpha map，多行共用会导致状态混乱，
+  /// 故每行独占一个实例。首次访问时懒创建。
+  final Map<int, WordRenderer> _wordRenderers = <int, WordRenderer>{};
+
+  /// 每行独立的 [LineRenderer] 缓存（按行索引）。
+  final Map<int, LineRenderer> _lineRenderers = <int, LineRenderer>{};
+
+  // ============== 当前状态 ==============
+
+  int _currentLineIndex = -1;
+  Offset? _tapDownPosition;
+
+  @override
+  void initState() {
+    super.initState();
+    // createTicker 由 SingleTickerProviderStateMixin 提供，
+    // 在 widget 不可见时自动暂停（muted），节省 CPU。
+    _ticker = createTicker(_onTick);
+    _ticker.start();
+    _lastElapsed = Duration.zero;
+  }
+
+  @override
+  void didUpdateWidget(covariant AppleLyricsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // lines 列表缩短时，清理不再存在的行索引对应的 renderer 缓存，避免内存泄漏
+    _wordRenderers.removeWhere((key, _) => key >= widget.lines.length);
+    _lineRenderers.removeWhere((key, _) => key >= widget.lines.length);
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  // ============== 工具方法 ==============
+
+  /// 获取或创建指定行的 [WordRenderer]。
+  WordRenderer _wordRendererFor(int index) =>
+      _wordRenderers.putIfAbsent(index, () => WordRenderer());
+
+  /// 获取或创建指定行的 [LineRenderer]。
+  LineRenderer _lineRendererFor(int index) =>
+      _lineRenderers.putIfAbsent(index, () => LineRenderer());
+
+  /// 计算指定行的播放进度（0~1），用于 [WordRenderer.tick] 的 progress 参数。
+  double _lineProgress(int lineIndex, int currentTimeMs) {
+    if (lineIndex < 0 || lineIndex >= widget.lines.length) return 0.0;
+    final line = widget.lines[lineIndex];
+    if (line.duration <= 0) return 0.0;
+    final p = (currentTimeMs - line.startTime) / line.duration;
+    return p.clamp(0.0, 1.0).toDouble();
+  }
+
+  // ============== 动画推进 ==============
+
+  void _onTick(Duration elapsed) {
+    // 使用 Ticker 的调度器时钟（测试中为模拟时间）计算 dt，
+    // 避免 DateTime.now() 在测试中返回真实墙钟时间导致弹簧不推进。
+    final dt = (elapsed - _lastElapsed).inMicroseconds / 1000000.0;
+    _lastElapsed = elapsed;
+
+    // 1. 找当前行
+    _currentLineIndex =
+        AppleLyricsView.findCurrentLineIndex(widget.lines, widget.currentTimeMs);
+
+    // 2. 推进滚动控制器（需要 lineHeight 与 intervalMs 计算目标 posY）
+    if (_currentLineIndex >= 0) {
+      final fontSize = LyricLayout.fontSize(context);
+      final lineHeight = fontSize * LyricLayout.lineHeight;
+      // intervalMs = 下一行 startTime - 当前行 endTime，用于动态 stiffness
+      int intervalMs = 0;
+      if (_currentLineIndex < widget.lines.length - 1) {
+        final current = widget.lines[_currentLineIndex];
+        final next = widget.lines[_currentLineIndex + 1];
+        intervalMs = next.startTime - current.endTime;
+      }
+      _scrollController.setCurrentLine(
+        _currentLineIndex,
+        // 暂停时视为 seeking 模式（固定弹簧参数），播放时用动态参数
+        isSeeking: !widget.isPlaying,
+        lineHeight: lineHeight,
+        intervalMs: intervalMs,
+      );
+    }
+    _scrollController.tick(dt);
+
+    // 3. 推进当前行缩放控制器（仅管理当前行的 scale 弹簧 0.97→1.0）
+    _scaleController.setLineState(
+      isActive: true,
+      enableScale: widget.enableScale,
+    );
+    _scaleController.tick(dt);
+
+    // 4. 推进每行的 renderer（按 hasWordTiming 选择 WordRenderer 或 LineRenderer）
+    final progress = _lineProgress(_currentLineIndex, widget.currentTimeMs);
+    for (int i = 0; i < widget.lines.length; i++) {
+      final line = widget.lines[i];
+      final isActive = i == _currentLineIndex;
+      // 当前行使用 LineScaleController 的弹簧 scale；非当前行直接 inactive
+      final scale = isActive
+          ? (widget.enableScale
+              ? _scaleController.currentScale
+              : LyricLayout.activeScale)
+          : (widget.enableScale
+              ? LyricLayout.inactiveScale
+              : LyricLayout.activeScale);
+      if (line.hasWordTiming) {
+        final renderer = _wordRendererFor(i);
+        renderer.setLineState(isActive: isActive, scale: scale);
+        renderer.tick(dt, isActive ? progress : 0.0);
+      } else {
+        final renderer = _lineRendererFor(i);
+        renderer.setLineState(isActive: isActive, scale: scale);
+        renderer.tick(dt);
+      }
+    }
+
+    // 5. 间奏检测与推进
+    _updateInterlude();
+
+    // 6. 触发重绘
+    setState(() {});
+  }
+
+  /// 检测当前行与下一行之间是否构成间奏（间隔 >= 4000ms），更新 [_interludeDots]。
+  ///
+  /// 间奏时段：[current.endTime, next.startTime - 250ms]，
+  /// 250ms 提前结束以准备下一行渲染。
+  void _updateInterlude() {
+    if (_currentLineIndex < 0 ||
+        _currentLineIndex >= widget.lines.length - 1) {
+      _interludeDots.clear();
+      return;
+    }
+    final current = widget.lines[_currentLineIndex];
+    final next = widget.lines[_currentLineIndex + 1];
+    final gap = next.startTime - current.endTime;
+    if (gap >= LyricLayout.interludeThresholdMs) {
+      // endTime 已减去 interludeEarlyEndMs，InterludeDots 内部不再二次扣减
+      _interludeDots.setInterlude(
+        current.endTime,
+        next.startTime - LyricLayout.interludeEarlyEndMs,
+      );
+    } else {
+      _interludeDots.clear();
+    }
+    _interludeDots.tick(widget.currentTimeMs);
+  }
+
+  // ============== 点击跳转 ==============
+
+  void _onTapDown(TapDownDetails details) {
+    _tapDownPosition = details.localPosition;
+  }
+
+  void _onTapUp(TapUpDetails details) {
+    final downPos = _tapDownPosition;
+    if (downPos == null) return;
+    _tapDownPosition = null;
+    // 移动距离 < clickThresholdPx(10px) 视为点击，否则视为滚动
+    final delta = (details.localPosition - downPos).distance;
+    if (delta >= LyricLayout.clickThresholdPx) return;
+
+    // 计算点击 y 对应的行索引：lineTop_y = i * lineHeight + posY
+    final fontSize = LyricLayout.fontSize(context);
+    final lineHeight = fontSize * LyricLayout.lineHeight;
+    final posY = _scrollController.posY;
+    final relativeY = details.localPosition.dy - posY;
+    final index = (relativeY / lineHeight).floor();
+    if (index >= 0 && index < widget.lines.length) {
+      widget.onSeek?.call(widget.lines[index].startTime);
+    }
+  }
+
+  // ============== 构建 ==============
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 设置视口大小，供 scrollController 计算 targetY
+        _scrollController.setViewportSize(
+          Size(constraints.maxWidth, constraints.maxHeight),
+        );
+
+        final fontSize = LyricLayout.fontSize(context);
+        final lineHeight = fontSize * LyricLayout.lineHeight;
+
+        return GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTapDown: _onTapDown,
+          onTapUp: _onTapUp,
+          child: ClipRect(
+            child: CustomPaint(
+              painter: _LyricsPainter(
+                lines: widget.lines,
+                currentLineIndex: _currentLineIndex,
+                posY: _scrollController.posY,
+                fontSize: fontSize,
+                lineHeight: lineHeight,
+                viewportHeight: constraints.maxHeight,
+                viewportWidth: constraints.maxWidth,
+                currentTimeMs: widget.currentTimeMs,
+                enableScale: widget.enableScale,
+                wordRenderers: _wordRenderers,
+                lineRenderers: _lineRenderers,
+                scaleController: _scaleController,
+                emphasizeEffect: _emphasizeEffect,
+                interludeDots: _interludeDots,
+              ),
+              size: Size.infinite,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// 歌词绘制器。
+///
+/// 遍历所有 lines，跳过视口外（含 overscan=300px 上下缓冲）的行，
+/// 按行调用对应 renderer 的 [WordRenderer.paintLine] / [LineRenderer.paintLine]。
+///
+/// 当前行通过 [LineScaleController.currentScale] 提供 scale（弹簧动画），
+/// 非当前行直接使用 [LyricLayout.inactiveScale]=0.97。
+///
+/// 间奏时段在视口中央绘制 [InterludeDots]。
+class _LyricsPainter extends CustomPainter {
+  final List<LyricLine> lines;
+  final int currentLineIndex;
+  final double posY;
+  final double fontSize;
+  final double lineHeight;
+  final double viewportHeight;
+  final double viewportWidth;
+  final int currentTimeMs;
+  final bool enableScale;
+  final Map<int, WordRenderer> wordRenderers;
+  final Map<int, LineRenderer> lineRenderers;
+  final LineScaleController scaleController;
+  final EmphasizeEffect emphasizeEffect;
+  final InterludeDots interludeDots;
+
+  _LyricsPainter({
+    required this.lines,
+    required this.currentLineIndex,
+    required this.posY,
+    required this.fontSize,
+    required this.lineHeight,
+    required this.viewportHeight,
+    required this.viewportWidth,
+    required this.currentTimeMs,
+    required this.enableScale,
+    required this.wordRenderers,
+    required this.lineRenderers,
+    required this.scaleController,
+    required this.emphasizeEffect,
+    required this.interludeDots,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // 行水平起始位置：左留 1em 边距（对应 LyricLayout.linePadding 的 horizontal）
+    final double startX = fontSize * 1.0;
+
+    for (int i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      // 行顶部 y 坐标 = i * lineHeight + posY
+      final double y = i * lineHeight + posY;
+
+      // 跳过视口外（含 overscan=300px 上下缓冲）的行，避免不必要的绘制
+      if (y + lineHeight < -LyricLayout.overscanPx) continue;
+      if (y > viewportHeight + LyricLayout.overscanPx) continue;
+
+      final bool isActive = i == currentLineIndex;
+      // 当前行用 LineScaleController 的弹簧 scale，非当前行用 inactiveScale
+      final double scale = isActive
+          ? (enableScale
+              ? scaleController.currentScale
+              : LyricLayout.activeScale)
+          : (enableScale
+              ? LyricLayout.inactiveScale
+              : LyricLayout.activeScale);
+
+      // 保存画布状态，应用 scale 变换（transform-origin: left）
+      canvas.save();
+      final double pivotX = startX;
+      final double pivotY = y + lineHeight / 2;
+      canvas.translate(pivotX, pivotY);
+      canvas.scale(scale, scale);
+      canvas.translate(-pivotX, -pivotY);
+
+      // 根据 hasWordTiming 选择逐字 / 整行 renderer
+      if (line.hasWordTiming) {
+        // 逐字模式：KRC 行
+        final renderer = wordRenderers[i] ?? WordRenderer();
+        renderer.setLineState(isActive: isActive, scale: scale);
+        renderer.paintLine(canvas, Offset(startX, y), line, fontSize);
+      } else {
+        // 整行模式：LRC / 纯文本行
+        final renderer = lineRenderers[i] ?? LineRenderer();
+        renderer.setLineState(isActive: isActive, scale: scale);
+        renderer.paintLine(canvas, Offset(startX, y), line, fontSize);
+      }
+
+      canvas.restore();
+    }
+
+    // 绘制间奏点（若处于间奏时段）。
+    // InterludeDots.paint 内部会判断是否在间奏时段，非间奏时直接返回。
+    final double centerX = viewportWidth / 2;
+    final double centerY = viewportHeight / 2;
+    // radius=16 为点间距，dotRadius=4 为单点基准半径
+    interludeDots.paint(canvas, Offset(centerX, centerY), 16, 4);
+  }
+
+  @override
+  bool shouldRepaint(covariant _LyricsPainter oldDelegate) {
+    // 每帧重绘（动画驱动，setState 每帧调用）
+    return true;
+  }
+}

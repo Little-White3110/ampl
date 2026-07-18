@@ -1,0 +1,559 @@
+import 'dart:io';
+
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../../data/repositories/settings_repository.dart';
+import '../../providers/kugou_provider.dart';
+import '../../providers/theme_provider.dart';
+import '../../widgets/apple_lyrics/preview/lyrics_preview_page.dart';
+
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  final SettingsRepository _settingsRepository = SettingsRepository();
+  final TextEditingController _apiServerController = TextEditingController(
+    text: 'http://127.0.0.1:8080',
+  );
+  ThemeMode _themeMode = ThemeMode.system;
+  String _defaultQuality = 'hq';
+  bool _isTestingConnection = false;
+  String? _connectionResult;
+  bool _autoReceiveVip = true;
+  String _appVersion = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+    _loadVersion();
+  }
+
+  @override
+  void dispose() {
+    _apiServerController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadSettings() async {
+    final themeMode = await _settingsRepository.getThemeMode();
+    final quality = await _settingsRepository.getDefaultQuality();
+    final autoReceiveVip = await _settingsRepository.getAutoReceiveVip();
+    final apiServerUrl = await _settingsRepository.getApiServerUrl();
+
+    setState(() {
+      _themeMode = themeMode;
+      _defaultQuality = quality;
+      _autoReceiveVip = autoReceiveVip;
+      _apiServerController.text = apiServerUrl;
+    });
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (mounted) {
+        setState(() {
+          _appVersion = info.version;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _appVersion = '3.2.0';
+        });
+      }
+    }
+  }
+
+  Future<void> _testConnection() async {
+    setState(() {
+      _isTestingConnection = true;
+      _connectionResult = null;
+    });
+
+    final url = _apiServerController.text.trim();
+
+    try {
+      final response = await http
+          .get(Uri.parse('$url/server/now'))
+          .timeout(const Duration(seconds: 5));
+      final success = response.statusCode == 200;
+      setState(() {
+        _connectionResult = success
+            ? '连接成功'
+            : '连接失败: HTTP ${response.statusCode}';
+      });
+      if (success) {
+        await _settingsRepository.setApiServerUrl(url);
+      }
+    } catch (e) {
+      setState(() {
+        _connectionResult = '连接失败: $e';
+      });
+    }
+
+    setState(() {
+      _isTestingConnection = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('设置')),
+      body: ListView(
+        children: [
+          _buildSectionHeader('外观'),
+          _buildAppearanceSection(colorScheme),
+          const Divider(),
+          _buildSectionHeader('播放'),
+          _buildPlaybackSection(colorScheme),
+          const Divider(),
+          _buildSectionHeader('在线音乐'),
+          _buildOnlineMusicSection(colorScheme),
+          const Divider(),
+          _buildSectionHeader('缓存'),
+          _buildCacheSection(colorScheme),
+          const Divider(),
+          _buildSectionHeader('关于'),
+          _buildAboutSection(colorScheme),
+          const SizedBox(height: 32),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Text(
+        title,
+        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+          color: Theme.of(context).colorScheme.primary,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAppearanceSection(ColorScheme colorScheme) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '主题模式',
+                  style: Theme.of(context).textTheme.bodyLarge,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: SegmentedButton<ThemeMode>(
+            segments: const [
+              ButtonSegment(
+                value: ThemeMode.light,
+                label: Text('浅色'),
+                icon: Icon(Icons.light_mode),
+              ),
+              ButtonSegment(
+                value: ThemeMode.dark,
+                label: Text('深色'),
+                icon: Icon(Icons.dark_mode),
+              ),
+              ButtonSegment(
+                value: ThemeMode.system,
+                label: Text('跟随系统'),
+                icon: Icon(Icons.brightness_auto),
+              ),
+            ],
+            selected: {_themeMode},
+            onSelectionChanged: (modes) {
+              final mode = modes.first;
+              setState(() {
+                _themeMode = mode;
+              });
+              context.read<ThemeProvider>().setThemeMode(mode);
+              _settingsRepository.setThemeMode(mode);
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  Widget _buildPlaybackSection(ColorScheme colorScheme) {
+    return Column(
+      children: [
+        ListTile(
+          title: const Text('默认音质'),
+          subtitle: Text(_getQualityLabel(_defaultQuality)),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _showQualityDialog(),
+        ),
+        SwitchListTile(
+          title: const Text('自动领取VIP'),
+          subtitle: const Text('每次启动自动领取每日VIP（需要登录）'),
+          value: _autoReceiveVip,
+          onChanged: (value) {
+            setState(() {
+              _autoReceiveVip = value;
+            });
+            _settingsRepository.setAutoReceiveVip(value);
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOnlineMusicSection(ColorScheme colorScheme) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          child: TextField(
+            controller: _apiServerController,
+            decoration: InputDecoration(
+              labelText: '在线登录接口地址',
+              hintText: 'http://115.29.236.96:5621',
+              border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                icon: _isTestingConnection
+                    ? SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: colorScheme.primary,
+                        ),
+                      )
+                    : const Icon(Icons.wifi_find),
+                onPressed: _isTestingConnection ? null : _testConnection,
+              ),
+            ),
+            onSubmitted: (_) => _testConnection(),
+          ),
+        ),
+        if (_connectionResult != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: Text(
+              _connectionResult!,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _connectionResult == '连接成功'
+                    ? Colors.green
+                    : colorScheme.error,
+              ),
+            ),
+          )
+        else
+          const SizedBox(height: 8),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.wifi_tethering),
+              label: const Text('测试连接'),
+              onPressed: _isTestingConnection ? null : _testConnection,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        ListTile(
+          leading: Icon(Icons.dns, color: colorScheme.primary),
+          title: const Text('本地数据接口'),
+          subtitle: const Text('http://127.0.0.1:8080'),
+          trailing: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.green.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Text(
+              '运行中',
+              style: TextStyle(color: Colors.green, fontSize: 12),
+            ),
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Text(
+            '本地 Node.js 服务器运行中，推荐/排行/搜索/播放等数据接口均通过本地处理',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCacheSection(ColorScheme colorScheme) {
+    return Column(
+      children: [
+        ListTile(
+          title: const Text('清除缓存'),
+          leading: Icon(Icons.delete_outline, color: colorScheme.error),
+          onTap: () => _showClearCacheDialog(),
+        ),
+        ListTile(
+          title: const Text('数据迁移（修复数据混乱）'),
+          subtitle: const Text('如果看到其他用户的信息，执行此操作'),
+          leading: Icon(Icons.bug_report, color: colorScheme.tertiary),
+          onTap: () => _showDataMigrationDialog(),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showDataMigrationDialog() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('🔧 数据迁移'),
+        content: const Text(
+          '此操作将清除旧版本的登录数据，修复可能的数据混乱问题。\n\n'
+          '执行后需要重新登录。\n\n'
+          '是否继续？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('执行'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+
+        // 清除旧版本的全局键
+        await prefs.remove('kugou_token');
+        await prefs.remove('kugou_userid');
+        await prefs.remove('kugou_vip_token');
+        await prefs.remove('kugou_dfid');
+        await prefs.remove('kugou_current_userid');
+
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ 数据迁移完成，请重新登录'),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 3),
+          ),
+        );
+
+        // 退出登录
+        context.read<KugouProvider>().logout();
+
+        // 返回上一页
+        Navigator.of(context).pop();
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ 数据迁移失败: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _buildAboutSection(ColorScheme colorScheme) {
+    return Column(
+      children: [
+        ListTile(
+          title: const Text('应用版本'),
+          subtitle: Text(_appVersion.isEmpty ? '3.2.0' : _appVersion),
+          leading: const Icon(Icons.info_outline),
+        ),
+        ListTile(
+          title: const Text('更新最新版本'),
+          subtitle: const Text('https://github.com/zzyoxml/md3Music/releases'),
+          leading: const Icon(Icons.system_update_outlined),
+          trailing: const Icon(Icons.open_in_new, size: 18),
+          onTap: () => _openReleasesUrl(),
+        ),
+        ListTile(
+          title: const Text('开源许可'),
+          leading: const Icon(Icons.description_outlined),
+          onTap: () {
+            showLicensePage(
+              context: context,
+              applicationName: 'MD3Music',
+              applicationVersion: _appVersion.isEmpty ? '3.2.0' : _appVersion,
+            );
+          },
+        ),
+        // 开发者入口：跳转 Apple Music 风格歌词渲染预览页（Task 22.5）
+        ListTile(
+          title: const Text('歌词预览（开发）'),
+          subtitle: const Text('Apple Music 风格歌词渲染调试'),
+          leading: const Icon(Icons.lyrics_outlined),
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const LyricsPreviewPage(),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openReleasesUrl() async {
+    const url = 'https://github.com/zzyoxml/md3Music/releases';
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  String _getQualityLabel(String quality) {
+    switch (quality) {
+      case 'standard':
+      case '128':
+        return '标准 128k';
+      case 'hq':
+      case '320':
+        return '高品质 320k';
+      case 'sq':
+      case 'flac':
+        return '无损 FLAC';
+      case 'hires':
+        return 'Hi-Res';
+      default:
+        return '高品质 320k';
+    }
+  }
+
+  void _showQualityDialog() {
+    final qualities = [
+      ('128', '标准 128k'),
+      ('320', '高品质 320k'),
+      ('flac', '无损 FLAC'),
+    ];
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return SimpleDialog(
+          title: const Text('默认音质'),
+          children: qualities.map((q) {
+            return SimpleDialogOption(
+              onPressed: () {
+                setState(() {
+                  _defaultQuality = q.$1;
+                });
+                _settingsRepository.setDefaultQuality(q.$1);
+                Navigator.pop(context);
+              },
+              child: Text(
+                q.$2,
+                style: TextStyle(
+                  color: _defaultQuality == q.$1
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
+                ),
+              ),
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
+
+  void _showClearCacheDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('清除缓存'),
+          content: const Text('确定要清除所有缓存数据吗？此操作不可撤销。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await _doClearCache();
+              },
+              child: const Text('确定'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _doClearCache() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      // 1. 清图片缓存
+      await DefaultCacheManager().emptyCache();
+      // 2. 清 app 临时目录（Android 系统设置里的"清除缓存"也指这个）
+      try {
+        final dir = await getTemporaryDirectory();
+        if (dir.existsSync()) {
+          for (final entity in dir.listSync()) {
+            try {
+              if (entity is Directory) {
+                entity.deleteSync(recursive: true);
+              } else {
+                entity.deleteSync();
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+      // 3. 清 KugouProvider 内存
+      if (mounted) {
+        context.read<KugouProvider>().clearMemoryCache();
+      }
+      // 4. 重置发现页日期标志
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('discover_last_date');
+      _settingsRepository.setCacheSize(0);
+    } catch (e) {
+      debugPrint('Clear cache error: $e');
+    }
+    if (mounted) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('已清除缓存'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+}
