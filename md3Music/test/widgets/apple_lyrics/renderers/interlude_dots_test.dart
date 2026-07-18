@@ -176,7 +176,8 @@ void main() {
       test('AMLL 循环呼吸：3 个点相位错开', () {
         final dots = InterludeDots();
         dots.setInterlude(10000, 20000);
-        dots.tick(10000); // visible
+        dots.tick(9000); // hidden → preview
+        dots.tick(10000); // preview → visible（switch 不 fall through，需两次 tick）
         // t=0 时 3 个点应有不同亮度（相位 0/120/240）
         final i0 = dots.dotIntensity(0, 10000);
         final i1 = dots.dotIntensity(1, 10000);
