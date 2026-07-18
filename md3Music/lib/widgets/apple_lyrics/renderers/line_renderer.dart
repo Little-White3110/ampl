@@ -46,9 +46,6 @@ class LineRenderer {
   /// 目标 alpha 值。isActive=true 时 1.0，false 时 0.2。
   double _targetAlpha = LyricLayout.currentDarkAlpha;
 
-  /// 当前 scale（用于计算 dynamic alpha，与 WordRenderer 公式一致）。
-  double _scale = LyricLayout.inactiveScale;
-
   /// 复用的 TextPainter 实例（避免每帧创建对象）。
   ///
   /// **性能优化**：之前每帧 paintLine 都创建新 TextPainter + GC，
@@ -80,7 +77,6 @@ class LineRenderer {
   /// - dynamicBrightAlpha = factor * 0.8 + 0.2（范围 0.2~1.0）
   void setLineState({required bool isActive, required double scale}) {
     _isActive = isActive;
-    _scale = scale;
     final double factor = ((scale - LyricLayout.inactiveScale) /
             (LyricLayout.activeScale - LyricLayout.inactiveScale))
         .clamp(0.0, 1.0)
