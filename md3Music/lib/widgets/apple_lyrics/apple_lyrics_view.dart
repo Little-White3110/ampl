@@ -261,7 +261,10 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     );
     _scaleController.tick(dt);
 
-    // 4. 推进每行的 renderer（按 hasWordTiming 选择 WordRenderer 或 LineRenderer）
+    // 4. 推进每行的 renderer
+    // 性能优化：非当前行用 LineRenderer（整行单一 alpha，1 次 layout/帧），
+    // 当前行用 WordRenderer（逐字 alpha + 上浮，N 次 layout/帧）。
+    // 视口内约 10 行，从 10×N 次 layout 降为 9+N 次，主线程 CPU 显著下降。
     final progress = _lineProgress(_currentLineIndex, widget.currentTimeMs);
     for (int i = 0; i < widget.lines.length; i++) {
       final line = widget.lines[i];
@@ -274,10 +277,13 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
           : (widget.enableScale
               ? LyricLayout.inactiveScale
               : LyricLayout.activeScale);
-      if (line.hasWordTiming) {
+      // 当前行 + 有 word 时间戳 → WordRenderer（逐字模式）
+      // 否则 → LineRenderer（整行模式，含非当前行的 KRC 行）
+      final bool useWordRenderer = isActive && line.hasWordTiming;
+      if (useWordRenderer) {
         final renderer = _wordRendererFor(i);
-        renderer.setLineState(isActive: isActive, scale: scale);
-        renderer.tick(dt, isActive ? progress : 0.0);
+        renderer.setLineState(isActive: true, scale: scale);
+        renderer.tick(dt, progress);
       } else {
         final renderer = _lineRendererFor(i);
         renderer.setLineState(isActive: isActive, scale: scale);
@@ -537,11 +543,14 @@ class _LyricsPainter extends CustomPainter {
       canvas.scale(scale, scale);
       canvas.translate(-pivotX, -pivotY);
 
-      // 根据 hasWordTiming 选择逐字 / 整行 renderer
-      if (line.hasWordTiming) {
-        // 逐字模式：KRC 行
+      // 当前行 + 有 word 时间戳 → WordRenderer（逐字模式：N 次 layout/帧）
+      // 否则 → LineRenderer（整行模式：1 次 layout/帧，含非当前行的 KRC 行）
+      // 性能优化：非当前行不需要逐字渐变，用 LineRenderer 大幅减少 layout 次数
+      final bool useWordRenderer = isActive && line.hasWordTiming;
+      if (useWordRenderer) {
+        // 逐字模式：当前行的 KRC 行
         final renderer = wordRenderers[i] ?? WordRenderer();
-        renderer.setLineState(isActive: isActive, scale: scale);
+        renderer.setLineState(isActive: true, scale: scale);
         renderer.paintLine(
           canvas,
           Offset(startX, y),
@@ -550,7 +559,7 @@ class _LyricsPainter extends CustomPainter {
           maxWidth: maxLineWidth,
         );
       } else {
-        // 整行模式：LRC / 纯文本行
+        // 整行模式：LRC/纯文本行 + 非当前行的 KRC 行
         final renderer = lineRenderers[i] ?? LineRenderer();
         renderer.setLineState(isActive: isActive, scale: scale);
         renderer.paintLine(

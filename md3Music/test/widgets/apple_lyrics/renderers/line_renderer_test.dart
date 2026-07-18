@@ -310,23 +310,28 @@ void main() {
       expect(renderer.currentAlpha, closeTo(0.2, 1e-9));
     });
 
-    test('scale 参数不影响 alpha 计算（被忽略）', () {
-      // 同样 isActive=true，但 scale 不同
+    test('scale 参数影响 alpha 计算（与 WordRenderer 公式一致）', () {
+      // isActive=true，scale 不同 → dynamicBrightAlpha 不同
+      // factor = clamp01((scale - 0.97) / 0.03)
+      // dynamicBrightAlpha = factor * 0.8 + 0.2
       final r1 = LineRenderer()
-        ..setLineState(isActive: true, scale: LyricLayout.activeScale);
+        ..setLineState(isActive: true, scale: LyricLayout.activeScale); // factor=1 → 1.0
       final r2 = LineRenderer()
-        ..setLineState(isActive: true, scale: LyricLayout.inactiveScale);
+        ..setLineState(isActive: true, scale: LyricLayout.inactiveScale); // factor=0 → 0.2
       final r3 = LineRenderer()
-        ..setLineState(isActive: true, scale: 0.5);
+        ..setLineState(isActive: true, scale: 0.985); // factor=0.5 → 0.6
 
       for (int i = 0; i < 100; i++) {
         r1.tick(0.016);
         r2.tick(0.016);
         r3.tick(0.016);
       }
-      // 三个 renderer 的 currentAlpha 应几乎相同（scale 不影响）
-      expect(r1.currentAlpha, closeTo(r2.currentAlpha, 1e-9));
-      expect(r2.currentAlpha, closeTo(r3.currentAlpha, 1e-9));
+      // r1: scale=1.0 → dynamicBright=1.0
+      expect(r1.currentAlpha, closeTo(1.0, 0.01));
+      // r2: scale=0.97 → dynamicBright=0.2
+      expect(r2.currentAlpha, closeTo(0.2, 0.01));
+      // r3: scale=0.985 → dynamicBright=0.6
+      expect(r3.currentAlpha, closeTo(0.6, 0.01));
     });
   });
 }
