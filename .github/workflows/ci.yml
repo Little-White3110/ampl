@@ -85,7 +85,10 @@ jobs:
         run: dart format --set-exit-if-changed lib/ test/
 
       - name: Run unit tests
-        run: flutter test --coverage --reporter expanded
+        # --machine：输出 JSON Lines（机器可读），供 dorny/test-reporter
+        # 的 flutter-json reporter 解析为 PR Check。
+        # 重定向到 test_output.json，不污染 CI 日志。
+        run: flutter test --coverage --machine > test_output.json
 
       - name: Upload coverage to artifact
         if: always()
@@ -100,8 +103,8 @@ jobs:
         uses: dorny/test-reporter@v1
         with:
           name: Flutter Test Results
-          path: 'md3Music/build/test-results/**/TEST-*.xml'
-          reporter: java-junit
+          path: 'md3Music/test_output.json'
+          reporter: flutter-json
           path-replace-backslashes: true
 
   # ============================================================
