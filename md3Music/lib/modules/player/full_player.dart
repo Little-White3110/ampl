@@ -144,7 +144,7 @@ class _FullPlayerState extends State<FullPlayer>
 
   /// 启动弹簧动画（如 ticker 未运行则启动）。
   void _startSpringAnimation() {
-    if (!_springTicker.active) {
+    if (!_springTicker.isActive) {
       _lastTickElapsed = null;
       _springTicker.start();
     }
