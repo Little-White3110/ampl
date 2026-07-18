@@ -97,9 +97,11 @@ class InterludeDots {
   void setInterlude(int? startTime, int? endTime) {
     if (startTime == null || endTime == null) {
       _isActive = false;
+      _startTime = null;
+      _endTime = null;
       return;
     }
-    // 相同间奏不重置
+    // 相同间奏不重置（保持 _lastTickTime 等状态，避免每帧重置）
     if (_startTime == startTime && _endTime == endTime && _isActive) {
       return;
     }
