@@ -97,8 +97,11 @@ class LineRenderer {
   /// [offset] 是行起始绘制原点。文字颜色固定白色 #FFFFFFFF，
   /// alpha 由 [_currentAlpha] 控制（整行同一 alpha，无 mask 渐变）。
   /// 使用 [TextPainter] 测量整行宽度并绘制。
+  ///
+  /// [maxWidth] 为可用最大文字宽度，超出时 TextPainter 自动换行（默认不换行）。
   void paintLine(
-      Canvas canvas, Offset offset, LyricLine line, double fontSize) {
+      Canvas canvas, Offset offset, LyricLine line, double fontSize,
+      {double maxWidth = double.infinity}) {
     if (line.text.isEmpty) return;
     final TextPainter painter = TextPainter(
       text: TextSpan(
@@ -111,7 +114,7 @@ class LineRenderer {
         ),
       ),
       textDirection: TextDirection.ltr,
-    )..layout();
+    )..layout(maxWidth: maxWidth == double.infinity ? double.infinity : maxWidth);
     painter.paint(canvas, offset);
   }
 

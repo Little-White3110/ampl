@@ -10,6 +10,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:md3music/widgets/apple_lyrics/apple_lyrics_view.dart';
+import 'package:md3music/widgets/apple_lyrics/layout/lyric_preferences_panel.dart';
 import 'package:md3music/widgets/apple_lyrics/models/lyric_line.dart';
 import 'package:md3music/widgets/apple_lyrics/parsers/lyric_parser_chain.dart';
 
@@ -82,6 +83,20 @@ class _LyricsPreviewPageState extends State<LyricsPreviewPage>
       appBar: AppBar(
         title: const Text('歌词预览'),
         actions: [
+          // 歌词显示设置（字号/行间距）
+          IconButton(
+            icon: const Icon(Icons.lyrics),
+            tooltip: '歌词显示设置',
+            onPressed: () {
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                builder: (context) => SafeArea(
+                  child: const LyricPreferencesPanel(),
+                ),
+              );
+            },
+          ),
           // 示例数据按钮：一键加载 KRC / LRC 示例并立即渲染
           PopupMenuButton<String>(
             onSelected: (value) {

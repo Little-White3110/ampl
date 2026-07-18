@@ -106,6 +106,18 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   int _currentLineIndex = -1;
   Offset? _tapDownPosition;
 
+  /// 预计算每行实际高度（含自动换行）。
+  ///
+  /// 在 [build] 时根据当前视口宽度和字号重新测量，供 painter 和
+  /// scrollController 使用。每行实际高度可能因换行而不同，
+  /// 故 posY 偏移需按累加 lineHeights[0..i-1] 计算。
+  List<double> _lineHeights = const <double>[];
+
+  /// 计算 [lineHeights] 的累加前缀（lineTops[i] = sum(lineHeights[0..i-1])）。
+  ///
+  /// 用于：当前行顶部 y 坐标 = lineTops[currentLineIndex] + posY。
+  List<double> _lineTops = const <double>[];
+
   @override
   void initState() {
     super.initState();
@@ -176,7 +188,15 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     // 2. 推进滚动控制器（需要 lineHeight 与 intervalMs 计算目标 posY）
     if (_currentLineIndex >= 0) {
       final fontSize = LyricLayout.fontSize(context);
-      final lineHeight = fontSize * LyricLayout.lineHeight;
+      final mainLineHeight = fontSize * LyricLayout.lineHeight;
+      // 当前行实际高度（含换行）：用预计算 _lineHeights，无则降级 mainLineHeight
+      final currentLineHeight = (_currentLineIndex < _lineHeights.length
+              ? _lineHeights[_currentLineIndex]
+              : mainLineHeight);
+      // 当前行顶部 y（前面所有行高度的累加）
+      final currentLineTop = (_currentLineIndex < _lineTops.length
+              ? _lineTops[_currentLineIndex]
+              : _currentLineIndex * mainLineHeight);
       // intervalMs = 下一行 startTime - 当前行 endTime，用于动态 stiffness
       int intervalMs = 0;
       if (_currentLineIndex < widget.lines.length - 1) {
@@ -188,8 +208,9 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
         _currentLineIndex,
         // 暂停时视为 seeking 模式（固定弹簧参数），播放时用动态参数
         isSeeking: !widget.isPlaying,
-        lineHeight: lineHeight,
+        lineHeight: currentLineHeight,
         intervalMs: intervalMs,
+        lineTop: currentLineTop,
       );
     }
     _scrollController.tick(dt);
@@ -271,12 +292,24 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     final delta = (details.localPosition - downPos).distance;
     if (delta >= LyricLayout.clickThresholdPx) return;
 
-    // 计算点击 y 对应的行索引：lineTop_y = i * lineHeight + posY
-    final fontSize = LyricLayout.fontSize(context);
-    final lineHeight = fontSize * LyricLayout.lineHeight;
+    // 计算点击 y 对应的行索引：用预计算的 lineTops（支持非均匀行高）
+    // 找第一个 lineTops[i+1] + posY > clickY 的 i（即 clickY 落在第 i 行内）
     final posY = _scrollController.posY;
     final relativeY = details.localPosition.dy - posY;
-    final index = (relativeY / lineHeight).floor();
+    if (_lineTops.isEmpty) return;
+    int index = -1;
+    for (int i = 0; i < _lineTops.length; i++) {
+      final top = _lineTops[i];
+      final height = _lineHeights.length > i ? _lineHeights[i] : 0;
+      if (relativeY >= top && relativeY < top + height) {
+        index = i;
+        break;
+      }
+    }
+    if (index < 0 && _lineTops.isNotEmpty) {
+      // 兜底：找最接近的行
+      index = (_lineTops.length - 1).clamp(0, widget.lines.length - 1);
+    }
     if (index >= 0 && index < widget.lines.length) {
       widget.onSeek?.call(widget.lines[index].startTime);
     }
@@ -294,19 +327,6 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     _scrollController.onUserScrollEnd();
   }
 
-  /// 长按歌词弹出字号/行间距调节菜单（实时反馈）。
-  ///
-  /// 菜单用 showModalBottomSheet，内含两个滑块（字号 12~30，行间距 1.0~2.0），
-  /// 滑动时直接调用 [LyricPreferences.instance.setFontSize] / [setLineSpacing]，
-  /// 由于 AppleLyricsView 监听了 LyricPreferences，字号/行间距变化立即生效。
-  void _onLongPress(LongPressStartDetails details) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => const _LyricPreferencesSheet(),
-    );
-  }
-
   // ============== 构建 ==============
 
   @override
@@ -319,37 +339,78 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
         );
 
         final fontSize = LyricLayout.fontSize(context);
-        final lineHeight = fontSize * LyricLayout.lineHeight;
+        final mainLineHeight = fontSize * LyricLayout.lineHeight;
+        // 可用最大文字宽度（视口宽 - 左右 1em 边距），用于自动换行
+        final maxLineWidth =
+            LyricLayout.maxLineWidth(constraints.maxWidth, fontSize);
+
+        // 预测量每行实际高度（含换行），并累加 lineTops
+        // 这一步在 build 阶段同步完成（TextPainter.layout 较快）
+        final List<double> heights = <double>[];
+        final List<double> tops = <double>[];
+        double acc = 0;
+        for (final line in widget.lines) {
+          heights.add(LyricLayout.measureLineHeight(
+            line,
+            fontSize,
+            mainLineHeight,
+            maxLineWidth,
+          ));
+          tops.add(acc);
+          acc += heights.last;
+        }
+        _lineHeights = heights;
+        _lineTops = tops;
 
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapDown: _onTapDown,
           onTapUp: _onTapUp,
           // 挂载垂直拖动手势：用户可上下滑动歌词，5s 后自动回弹到当前行。
-          // 之前缺失这个手势，导致用户完全无法上下滚动歌词。
           onVerticalDragUpdate: _onVerticalDragUpdate,
           onVerticalDragEnd: _onVerticalDragEnd,
-          // 长按弹出字号/行间距调节菜单
-          onLongPressStart: _onLongPress,
-          child: ClipRect(
-            child: CustomPaint(
-              painter: _LyricsPainter(
-                lines: widget.lines,
-                currentLineIndex: _currentLineIndex,
-                posY: _scrollController.posY,
-                fontSize: fontSize,
-                lineHeight: lineHeight,
-                viewportHeight: constraints.maxHeight,
-                viewportWidth: constraints.maxWidth,
-                currentTimeMs: widget.currentTimeMs,
-                enableScale: widget.enableScale,
-                wordRenderers: _wordRenderers,
-                lineRenderers: _lineRenderers,
-                scaleController: _scaleController,
-                emphasizeEffect: _emphasizeEffect,
-                interludeDots: _interludeDots,
+          // AMLL 上下渐变 mask：顶部底部各 15% 视口高度 alpha 渐变（黑→透明→黑）
+          // 用户确认（grill-me Q6）：按 AMLL 规范来。
+          // 用 ShaderMask + LinearGradient 实现，blendMode: dstIn
+          // 让歌词在两端淡出，营造无限滚动感。
+          child: ShaderMask(
+            shaderCallback: (Rect bounds) {
+              return LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: const <Color>[
+                  Color(0x00000000),
+                  Color(0xFF000000),
+                  Color(0xFF000000),
+                  Color(0x00000000),
+                ],
+                stops: const <double>[0.0, 0.15, 0.85, 1.0],
+              ).createShader(bounds);
+            },
+            blendMode: BlendMode.dstIn,
+            child: ClipRect(
+              child: CustomPaint(
+                painter: _LyricsPainter(
+                  lines: widget.lines,
+                  currentLineIndex: _currentLineIndex,
+                  posY: _scrollController.posY,
+                  fontSize: fontSize,
+                  mainLineHeight: mainLineHeight,
+                  lineHeights: _lineHeights,
+                  lineTops: _lineTops,
+                  viewportHeight: constraints.maxHeight,
+                  viewportWidth: constraints.maxWidth,
+                  maxLineWidth: maxLineWidth,
+                  currentTimeMs: widget.currentTimeMs,
+                  enableScale: widget.enableScale,
+                  wordRenderers: _wordRenderers,
+                  lineRenderers: _lineRenderers,
+                  scaleController: _scaleController,
+                  emphasizeEffect: _emphasizeEffect,
+                  interludeDots: _interludeDots,
+                ),
+                size: Size.infinite,
               ),
-              size: Size.infinite,
             ),
           ),
         );
@@ -367,14 +428,21 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
 /// 非当前行直接使用 [LyricLayout.inactiveScale]=0.97。
 ///
 /// 间奏时段在视口中央绘制 [InterludeDots]。
+///
+/// **自动换行**：每行实际高度由 [lineHeights] 提供（非均匀），
+/// 行顶部 y = lineTops[i] + posY（累加偏移）。renderer 的 paintLine 接收
+/// [maxLineWidth] 参数实现 word 级换行。
 class _LyricsPainter extends CustomPainter {
   final List<LyricLine> lines;
   final int currentLineIndex;
   final double posY;
   final double fontSize;
-  final double lineHeight;
+  final double mainLineHeight;
+  final List<double> lineHeights;
+  final List<double> lineTops;
   final double viewportHeight;
   final double viewportWidth;
+  final double maxLineWidth;
   final int currentTimeMs;
   final bool enableScale;
   final Map<int, WordRenderer> wordRenderers;
@@ -388,9 +456,12 @@ class _LyricsPainter extends CustomPainter {
     required this.currentLineIndex,
     required this.posY,
     required this.fontSize,
-    required this.lineHeight,
+    required this.mainLineHeight,
+    required this.lineHeights,
+    required this.lineTops,
     required this.viewportHeight,
     required this.viewportWidth,
+    required this.maxLineWidth,
     required this.currentTimeMs,
     required this.enableScale,
     required this.wordRenderers,
@@ -400,6 +471,14 @@ class _LyricsPainter extends CustomPainter {
     required this.interludeDots,
   });
 
+  /// 获取指定行 i 的实际高度（含换行），降级到 mainLineHeight。
+  double _heightOf(int i) =>
+      i < lineHeights.length ? lineHeights[i] : mainLineHeight;
+
+  /// 获取指定行 i 的顶部 y（累加偏移），降级到 i * mainLineHeight。
+  double _topOf(int i) =>
+      i < lineTops.length ? lineTops[i] : i * mainLineHeight;
+
   @override
   void paint(Canvas canvas, Size size) {
     // 行水平起始位置：左留 1em 边距（对应 LyricLayout.linePadding 的 horizontal）
@@ -407,8 +486,9 @@ class _LyricsPainter extends CustomPainter {
 
     for (int i = 0; i < lines.length; i++) {
       final line = lines[i];
-      // 行顶部 y 坐标 = i * lineHeight + posY
-      final double y = i * lineHeight + posY;
+      final double lineHeight = _heightOf(i);
+      // 行顶部 y 坐标 = lineTops[i] + posY（非均匀行高累加）
+      final double y = _topOf(i) + posY;
 
       // 跳过视口外（含 overscan=300px 上下缓冲）的行，避免不必要的绘制
       if (y + lineHeight < -LyricLayout.overscanPx) continue;
@@ -437,12 +517,24 @@ class _LyricsPainter extends CustomPainter {
         // 逐字模式：KRC 行
         final renderer = wordRenderers[i] ?? WordRenderer();
         renderer.setLineState(isActive: isActive, scale: scale);
-        renderer.paintLine(canvas, Offset(startX, y), line, fontSize);
+        renderer.paintLine(
+          canvas,
+          Offset(startX, y),
+          line,
+          fontSize,
+          maxWidth: maxLineWidth,
+        );
       } else {
         // 整行模式：LRC / 纯文本行
         final renderer = lineRenderers[i] ?? LineRenderer();
         renderer.setLineState(isActive: isActive, scale: scale);
-        renderer.paintLine(canvas, Offset(startX, y), line, fontSize);
+        renderer.paintLine(
+          canvas,
+          Offset(startX, y),
+          line,
+          fontSize,
+          maxWidth: maxLineWidth,
+        );
       }
 
       canvas.restore();
@@ -450,15 +542,16 @@ class _LyricsPainter extends CustomPainter {
 
     // 绘制间奏点（若处于间奏时段）。
     // 间奏点作为占位行嵌在歌词流里，位于当前行（currentLineIndex）与下一行之间。
-    // 占位行的 top y = (currentLineIndex + 1) * lineHeight + posY，
-    // 即"下一行歌词顶部"的位置，间奏点绘制在该行的垂直中心。
+    // 占位行的 top y = lineTops[currentLineIndex] + lineHeight + posY，
+    // 3 个点跟歌词一样左对齐到 startX。
     if (interludeDots.shouldRender && currentLineIndex >= 0) {
-      final double centerX = viewportWidth / 2;
-      // 占位行中心 y = 下一行歌词的 top + lineHeight/2
+      final double currentLineHeight = _heightOf(currentLineIndex);
+      final double currentLineTop = _topOf(currentLineIndex);
+      // 间奏点位于当前行之下的"虚拟下一行"位置
       final double placeholderTop =
-          (currentLineIndex + 1) * lineHeight + posY;
-      final double centerY = placeholderTop + lineHeight / 2;
-      interludeDots.paintAtLineY(canvas, centerX, centerY,
+          currentLineTop + currentLineHeight + posY;
+      final double centerY = placeholderTop + mainLineHeight / 2;
+      interludeDots.paintAtLineY(canvas, startX, centerY,
           dotRadius: 4, spacing: 16);
     }
   }
@@ -467,81 +560,5 @@ class _LyricsPainter extends CustomPainter {
   bool shouldRepaint(covariant _LyricsPainter oldDelegate) {
     // 每帧重绘（动画驱动，setState 每帧调用）
     return true;
-  }
-}
-
-/// 歌词字号/行间距调节面板（长按歌词弹出）。
-///
-/// 用 AnimatedBuilder 监听 [LyricPreferences]，滑动滑块时实时刷新歌词。
-/// 字号范围 12~30px，行间距系数范围 1.0~2.0。
-class _LyricPreferencesSheet extends StatelessWidget {
-  const _LyricPreferencesSheet();
-
-  @override
-  Widget build(BuildContext context) {
-    final prefs = LyricPreferences.instance;
-    return AnimatedBuilder(
-      animation: prefs,
-      builder: (context, _) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // 标题栏
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      '歌词显示',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    TextButton(
-                      onPressed: () => prefs.reset(),
-                      child: const Text('重置'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                // 字号滑块
-                Text('字号：${prefs.fontSize.round()} px'),
-                Slider(
-                  min: LyricPreferences.minFontSize,
-                  max: LyricPreferences.maxFontSize,
-                  divisions:
-                      (LyricPreferences.maxFontSize -
-                              LyricPreferences.minFontSize)
-                          .round(),
-                  value: prefs.fontSize,
-                  onChanged: prefs.setFontSize,
-                ),
-                const SizedBox(height: 8),
-                // 行间距滑块
-                Text(
-                    '行间距：${prefs.lineSpacing.toStringAsFixed(1)} ×'),
-                Slider(
-                  min: LyricPreferences.minLineSpacing,
-                  max: LyricPreferences.maxLineSpacing,
-                  divisions: ((LyricPreferences.maxLineSpacing -
-                              LyricPreferences.minLineSpacing) *
-                          10)
-                      .round(),
-                  value: prefs.lineSpacing,
-                  onChanged: prefs.setLineSpacing,
-                ),
-                const SizedBox(height: 8),
-                // 实际行高预览
-                Text(
-                  '实际行高倍数：${prefs.lineHeightMultiplier.toStringAsFixed(2)} ×',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
   }
 }

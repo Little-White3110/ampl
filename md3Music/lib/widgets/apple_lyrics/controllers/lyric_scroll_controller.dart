@@ -36,6 +36,12 @@ class LyricScrollController {
   /// 当前行高度（用于自动回弹时计算 targetY）
   double _currentLineHeight = 0;
 
+  /// 当前行顶部 y（累加偏移，支持非均匀行高）
+  ///
+  /// 之前 `targetYForLine` 用 `lineTop = lineIndex * lineHeight` 线性假设，
+  /// 启用自动换行后每行高度不同，需传入实际累加 lineTop。
+  double _currentLineTop = 0;
+
   /// 用户是否正在拖动
   bool _isUserScrolling = false;
 
@@ -82,21 +88,32 @@ class LyricScrollController {
   /// [intervalMs] 为下一行 startTime - 当前行 endTime，仅 [isSeeking]=false
   /// 时用于计算动态 stiffness。会被 clamp 到 [100, 800]。
   ///
-  /// [lineHeight] 为当前行的总高度（含 padding），用于计算 targetY。
+  /// [lineHeight] 为当前行的总高度（含 padding 与自动换行高度），
+  /// 用于计算 targetY。
+  ///
+  /// [lineTop] 为当前行顶部 y（前面所有行高度的累加），用于自动换行场景。
+  /// 默认 -1 表示用线性假设 `lineTop = lineIndex * lineHeight`。
+  ///
+  /// **重要**：用户正在拖动歌词时（[onUserScroll] 后到 5000ms 回弹前），
+  /// 不调用 `setTarget`，避免覆盖用户手动滚动位置导致瞬间回弹。
+  /// 仅更新 `_currentLineIndex` 和 `_currentLineHeight`，等用户松手 5s 后
+  /// 由 [_returnToCurrentLine] 自动对齐到最新行。
   void setCurrentLine(
     int index, {
     required bool isSeeking,
     required double lineHeight,
     int intervalMs = 0,
+    double lineTop = -1,
   }) {
     _currentLineIndex = index;
     _currentLineHeight = lineHeight;
+    _currentLineTop = lineTop >= 0 ? lineTop : index * lineHeight;
     _applySpringParams(isSeeking, intervalMs);
-    final double targetY = targetYForLine(index, lineHeight);
-    _posYSpring.setTarget(targetY);
-    // 切换到新行时，标记已对齐，不需要自动回弹
-    _autoReturned = true;
-    _autoReturnRemainingMs = 0;
+    // 用户滚动期间不强制 setTarget，等 5s 倒计时结束后自动回弹到最新行
+    if (!_isUserScrolling && _autoReturned) {
+      final double targetY = targetYForLine(index, lineHeight, lineTop: lineTop);
+      _posYSpring.setTarget(targetY);
+    }
   }
 
   /// 应用弹簧参数
@@ -123,14 +140,16 @@ class LyricScrollController {
   ///
   /// 公式：`targetY = -(lineTop + lineHeight/2 - viewportHeight * alignPosition)`
   ///
-  /// 其中 `lineTop = lineIndex * lineHeight`（线性布局假设）。
   /// 负号因为滚动是反向偏移（posY 越负，内容越往上）。
+  ///
+  /// [lineTop] 默认 -1 表示用线性假设 `lineTop = lineIndex * lineHeight`；
+  /// 自动换行场景下需传入实际累加 lineTop（前面所有行高度之和）。
   ///
   /// 例：viewport=600, lineHeight=40, lineIndex=0, alignPosition=0.35
   ///   → targetY = -(0 + 20 - 210) = 190
-  double targetYForLine(int lineIndex, double lineHeight) {
-    final double lineTop = lineIndex * lineHeight;
-    return -(lineTop + lineHeight / 2 - _viewportHeight * LyricLayout.alignPosition);
+  double targetYForLine(int lineIndex, double lineHeight, {double lineTop = -1}) {
+    final double top = lineTop >= 0 ? lineTop : lineIndex * lineHeight;
+    return -(top + lineHeight / 2 - _viewportHeight * LyricLayout.alignPosition);
   }
 
   /// 用户手动滚动（拖动）
@@ -179,7 +198,11 @@ class LyricScrollController {
   void _returnToCurrentLine() {
     _autoReturned = true;
     if (_currentLineIndex < 0 || _currentLineHeight <= 0) return;
-    final double targetY = targetYForLine(_currentLineIndex, _currentLineHeight);
+    final double targetY = targetYForLine(
+      _currentLineIndex,
+      _currentLineHeight,
+      lineTop: _currentLineTop,
+    );
     _posYSpring.setTarget(targetY);
   }
 
@@ -207,6 +230,7 @@ class LyricScrollController {
     _currentLineIndex = -1;
     _viewportHeight = 0;
     _currentLineHeight = 0;
+    _currentLineTop = 0;
     _autoReturned = true;
     _autoReturnRemainingMs = 0;
   }

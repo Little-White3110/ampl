@@ -14,6 +14,7 @@ import '../../services/kugou_api/kugou_api_client.dart';
 import '../../services/kugou_api/kugou_models.dart';
 import '../../widgets/apple_lyrics/animation/spring.dart';
 import '../../widgets/apple_lyrics/apple_lyrics_view.dart';
+import '../../widgets/apple_lyrics/layout/lyric_preferences_panel.dart';
 import '../../widgets/apple_lyrics/models/lyric_line.dart';
 import '../../widgets/apple_lyrics/parsers/lyric_parser_chain.dart';
 import 'comments_view.dart';
@@ -265,19 +266,26 @@ class _FullPlayerState extends State<FullPlayer>
   /// 使用 [ImageFilter.blur]（sigmaX/Y=50）对封面做高斯模糊，
   /// 封面放大填充屏幕并居中裁剪。封面不可用时降级纯黑背景。
   /// 对应 spec.md "Requirement: 模糊封面背景"。
+  ///
+  /// **性能**：包一层 [RepaintBoundary]，让模糊背景作为独立 Layer 缓存，
+  /// 避免上层每帧 setState（歌词逐字动画）触发模糊重算（25fps 卡顿主因）。
+  /// RepaintBoundary 在子树不变时复用同一 Layer，Image.network 加载完成
+  /// 后模糊结果会被缓存，后续每帧只需合成已有 layer。
   Widget _buildBlurredBackground(dynamic currentSong) {
     final artworkUri = currentSong.artworkUri as String?;
     if (artworkUri == null || artworkUri.isEmpty) {
       return const Positioned.fill(child: ColoredBox(color: Colors.black));
     }
     return Positioned.fill(
-      child: ImageFiltered(
-        imageFilter: ImageFilter.blur(sigmaX: 50, sigmaY: 50),
-        child: Image.network(
-          artworkUri,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) =>
-              const ColoredBox(color: Colors.black),
+      child: RepaintBoundary(
+        child: ImageFiltered(
+          imageFilter: ImageFilter.blur(sigmaX: 50, sigmaY: 50),
+          child: Image.network(
+            artworkUri,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) =>
+                const ColoredBox(color: Colors.black),
+          ),
         ),
       ),
     );
@@ -1308,6 +1316,14 @@ class _FullPlayerState extends State<FullPlayer>
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
+                leading: const Icon(Icons.lyrics),
+                title: const Text('歌词显示设置'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showLyricPreferencesSheet(context);
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.playlist_add),
                 title: const Text('添加到歌单'),
                 onTap: () {
@@ -1330,6 +1346,17 @@ class _FullPlayerState extends State<FullPlayer>
           ),
         );
       },
+    );
+  }
+
+  /// 弹出歌词字号/行间距调节面板（从播放页右上角菜单进入）。
+  void _showLyricPreferencesSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: const LyricPreferencesPanel(),
+      ),
     );
   }
 

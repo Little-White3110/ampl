@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../data/repositories/settings_repository.dart';
 import '../../providers/kugou_provider.dart';
 import '../../providers/theme_provider.dart';
+import '../../widgets/apple_lyrics/layout/lyric_preferences_panel.dart';
 import '../../widgets/apple_lyrics/preview/lyrics_preview_page.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -120,6 +121,9 @@ class _SettingsPageState extends State<SettingsPage> {
           _buildSectionHeader('外观'),
           _buildAppearanceSection(colorScheme),
           const Divider(),
+          _buildSectionHeader('歌词'),
+          _buildLyricSection(colorScheme),
+          const Divider(),
           _buildSectionHeader('播放'),
           _buildPlaybackSection(colorScheme),
           const Divider(),
@@ -146,6 +150,29 @@ class _SettingsPageState extends State<SettingsPage> {
           color: Theme.of(context).colorScheme.primary,
         ),
       ),
+    );
+  }
+
+  /// 歌词设置 section：点击进入字号/行间距调节面板。
+  Widget _buildLyricSection(ColorScheme colorScheme) {
+    return Column(
+      children: [
+        ListTile(
+          leading: const Icon(Icons.lyrics),
+          title: const Text('歌词显示'),
+          subtitle: const Text('字号、行间距'),
+          trailing: const Icon(Icons.chevron_right, size: 18),
+          onTap: () {
+            showModalBottomSheet(
+              context: context,
+              isScrollControlled: true,
+              builder: (context) => SafeArea(
+                child: const LyricPreferencesPanel(),
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 

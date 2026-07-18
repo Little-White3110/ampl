@@ -151,20 +151,30 @@ class WordRenderer {
     }
   }
 
-  /// 计算指定 word index 的目标 Y 偏移（上浮特效）。
+  /// 计算指定 word index 的目标 Y 偏移（AMLL 上浮特效）。
   ///
   /// - 非当前行：所有 word Y=0（不上浮）。
-  /// - 当前行：当前 word Y=_maxLiftPx（上浮），其他 word Y=0。
-  ///   简化实现：不做相邻字波浪感，只当前字上浮。
+  /// - 当前行：
+  ///   - 已播字（index < 当前 word 索引）：Y=_maxLiftPx（保持上浮，不回落）。
+  ///   - 当前字（index == 当前 word 索引）：按 word 内进度 0 → _maxLiftPx 线性上浮。
+  ///   - 未播字（index > 当前 word 索引）：Y=0。
+  ///
+  /// 用户确认（grill-me Q2 (A) AMLL 原版）：已播字保持上浮状态，
+  /// 营造整行从左到右逐渐浮起的效果，而非"弹一下回落"。
   double _targetYOffsetFor(int index, int wordCount) {
     if (!_isActive) return 0;
     final double wordPos = _currentLineProgress * wordCount;
     final int currentIdx = wordPos.floor();
+    if (index < currentIdx) {
+      // 已播字：保持上浮
+      return _maxLiftPx;
+    }
     if (index == currentIdx) {
       // 当前 word 内进度 0~1，上浮幅度从 0 → _maxLiftPx 线性
       final double wp = wordPos - currentIdx;
       return _maxLiftPx * wp;
     }
+    // 未播字：不上浮
     return 0;
   }
 
@@ -199,20 +209,29 @@ class WordRenderer {
   /// [offset] 是行起始绘制原点。文字颜色固定白色 #FFFFFFFF，
   /// 通过逐字 alpha 区分已播 / 未播。使用 [TextPainter] 测量每个 word 宽度并累加 x 偏移。
   ///
+  /// [maxWidth] 为该行可用最大文字宽度（视口宽 - 左右 1em 边距）。
+  /// 当 word 累加 dx 超过 [maxWidth] 且 dx > 0 时换行：
+  /// dx 归零，currentY += mainLineHeight × wrapLineHeightFactor（0.8x 行高）。
+  /// 默认 [double.infinity] 表示不换行（向后兼容）。
+  ///
   /// 若 [line] 没有 word 时间戳（`hasWordTiming=false`），降级为整行 SOLID
   /// 绘制（用 [dynamicDarkAlpha]）。完整整行降级渲染由 Task 10 处理，这里仅确保不崩溃。
   void paintLine(
-      Canvas canvas, Offset offset, LyricLine line, double fontSize) {
+      Canvas canvas, Offset offset, LyricLine line, double fontSize,
+      {double maxWidth = double.infinity}) {
     _ensureBound(line);
 
     if (line.words.isEmpty) {
-      _paintSolidFallback(canvas, offset, line, fontSize);
+      _paintSolidFallback(canvas, offset, line, fontSize, maxWidth: maxWidth);
       return;
     }
 
-    double dx = offset.dx;
-    final double dy = offset.dy;
+    double dx = 0; // 相对 offset.dx 的水平偏移
+    double currentY = offset.dy; // 当前视觉行的 y 坐标
     final double dark = dynamicDarkAlpha;
+    // 换行内部行高 = 主行高 × 0.8（与 LyricLayout.measureLineHeight 一致）
+    final double wrapLineHeight =
+        fontSize * LyricLayout.lineHeight * LyricLayout.wrapLineHeightFactor;
 
     for (int i = 0; i < line.words.length; i++) {
       final LyricWord word = line.words[i];
@@ -231,14 +250,22 @@ class WordRenderer {
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      painter.paint(canvas, Offset(dx, dy + yOffset));
+      // 自动换行：累计宽度超过 maxWidth 且本视觉行已有 word 时换行
+      if (dx + painter.width > maxWidth && dx > 0) {
+        dx = 0;
+        currentY += wrapLineHeight;
+      }
+      painter.paint(canvas, Offset(offset.dx + dx, currentY + yOffset));
       dx += painter.width;
     }
   }
 
   /// 整行降级绘制（无 word 时间戳时使用）。
+  ///
+  /// [maxWidth] 用于自动换行（默认 [double.infinity] 不换行）。
   void _paintSolidFallback(
-      Canvas canvas, Offset offset, LyricLine line, double fontSize) {
+      Canvas canvas, Offset offset, LyricLine line, double fontSize,
+      {double maxWidth = double.infinity}) {
     if (line.text.isEmpty) return;
     final double alpha = dynamicDarkAlpha;
     final TextPainter painter = TextPainter(
@@ -251,7 +278,7 @@ class WordRenderer {
         ),
       ),
       textDirection: TextDirection.ltr,
-    )..layout();
+    )..layout(maxWidth: maxWidth == double.infinity ? double.infinity : maxWidth);
     painter.paint(canvas, offset);
   }
 

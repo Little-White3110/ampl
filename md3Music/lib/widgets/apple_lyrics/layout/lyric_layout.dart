@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
+import '../models/lyric_line.dart';
 import 'lyric_preferences.dart';
 
 /// Apple Music 风格歌词布局常量
@@ -48,6 +49,78 @@ class LyricLayout {
 
   /// 行 wrapper 内 gap：0.3em
   static double lineGap(double fontSize) => fontSize * 0.3;
+
+  // ============== 自动换行 ==============
+
+  /// 换行行高系数：换行的内部行高 = 主行高 × 0.8。
+  ///
+  /// 用户确认（grill-me Q4）：换行行高 0.8x 正常行高，左边距与主行一致。
+  /// 即一行歌词若换为 N 个视觉行（N≥1），总高度为：
+  /// `mainLineHeight + (N - 1) * mainLineHeight * wrapLineHeightFactor`
+  static const double wrapLineHeightFactor = 0.8;
+
+  /// 计算视口内单行歌词可用的最大文字宽度（像素）。
+  ///
+  /// 左右边距各 1em（与 [linePadding] horizontal 一致，左对齐到 startX）。
+  /// 超出此宽度即触发自动换行。
+  static double maxLineWidth(double viewportWidth, double fontSize) {
+    final sidePadding = fontSize * 1.0;
+    final w = viewportWidth - sidePadding * 2;
+    return w > 0 ? w : 0;
+  }
+
+  /// 测量指定行在视口宽度内实际占用的总高度（含自动换行）。
+  ///
+  /// - 无 word 时间戳：用 [TextPainter] 对整行 text 自动换行测量。
+  /// - 有 word 时间戳：按 word 累加 dx 超过 [maxWidth] 即换行。
+  ///
+  /// 返回值即该行在垂直方向占用的像素高度。
+  static double measureLineHeight(
+    LyricLine line,
+    double fontSize,
+    double mainLineHeight,
+    double maxWidth,
+  ) {
+    if (maxWidth <= 0 || line.text.isEmpty) return mainLineHeight;
+
+    if (line.words.isEmpty) {
+      // 纯文本行：用 TextPainter 自动换行
+      final painter = TextPainter(
+        text: TextSpan(
+          text: line.text,
+          style: TextStyle(fontSize: fontSize, height: lineHeight),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: maxWidth);
+      final lineCount = painter.computeLineMetrics().length;
+      return lineCount <= 1
+          ? mainLineHeight
+          : mainLineHeight +
+              (lineCount - 1) * mainLineHeight * wrapLineHeightFactor;
+    }
+
+    // 逐字行：按 word 累加，超宽即换行
+    double dx = 0;
+    int rowCount = 1;
+    for (final word in line.words) {
+      final painter = TextPainter(
+        text: TextSpan(
+          text: word.text,
+          style: TextStyle(fontSize: fontSize, height: lineHeight),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      if (dx + painter.width > maxWidth && dx > 0) {
+        dx = 0;
+        rowCount++;
+      }
+      dx += painter.width;
+    }
+    return rowCount <= 1
+        ? mainLineHeight
+        : mainLineHeight +
+            (rowCount - 1) * mainLineHeight * wrapLineHeightFactor;
+  }
 
   // ============== 副行（翻译） ==============
 

@@ -1,28 +1,29 @@
 library;
 
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import '../layout/lyric_layout.dart';
 
-/// 间奏点动画组件（AMLL 规范重做版）。
+/// 间奏点动画组件（AMLL 规范重做版 v2）。
 ///
-/// 新需求（grilling 第二轮确定）：
-/// - **占位行**：间奏点作为一行内容嵌在歌词流里，行高 = 正常歌词行高，
-///   随歌词滚动移动，而非悬浮在屏幕中央。
-/// - **出现时机**：间奏开始前 [advanceShowMs]（3000ms）提前出现，
-///   给用户预告。
-/// - **动画曲线**：
-///   1. 出现阶段（间奏开始瞬间）：3 个点 scale 从 1.0 放大到 1.2，
-///      时长 [enlargeMs]（200ms）。
-///   2. 消失阶段（间奏结束后）：3 个点 scale 从 1.2 缩小到 0，
-///      时长 [shrinkMs]（400ms），缩小完成后占位行塌缩（歌词流收紧）。
-/// - **AMLL 规范**：3 个白色小圆点居中横排。
-/// - **未播放隐藏**：间奏开始前 3000ms 之外的时段完全不显示。
+/// 新需求（grilling 第三轮确定）：
+/// - **占位行 + 左对齐**：3 个点跟歌词一样左对齐到 [startX]，画在
+///   当前行的下一行位置（N+1 行），视觉上嵌在歌词流里。
+/// - **AMLL 循环呼吸**：3 个点按相位 0°/120°/240° 错开呼吸（亮度循环）。
+///   - 每个点亮度 = 0.4 + 0.6 * (sin(phase + t * speed) * 0.5 + 0.5)
+///   - t 为间奏内相对时间（ms），speed=2π/1500ms（1500ms 一个周期）
+/// - **出现/消失动画**：
+///   1. 提前 [advanceShowMs]（3000ms）显示，初始 scale=0，渐显到 1.0（fade-in 300ms）
+///   2. 间奏开始瞬间不再单独放大（之前的 1.0→1.2 删除，跟 AMLL 循环呼吸冲突）
+///   3. 间奏结束后 scale 从 1.0 → 0（shrink 400ms），随后占位行塌缩
+/// - **未播放隐藏**：间奏开始前 3000ms 之外完全不显示。
 ///
 /// 调用方流程：
 /// 1. 检测到间奏时段，调用 [setInterlude] 设置起止时间。
-/// 2. 每帧调用 [tick] 推进时间。
+/// 2. 每帧调用 [tick] 推进时间，返回当前应显示的点数（3 或 0）。
 /// 3. paint 时调用 [paintAtLineY] 在指定 y 坐标绘制（y = 占位行的 top）。
 class InterludeDots {
   InterludeDots();
@@ -32,11 +33,21 @@ class InterludeDots {
   /// 间奏开始前提前显示的时间（ms）。
   static const int advanceShowMs = 3000;
 
-  /// 出现阶段动画时长（ms）：1.0 → 1.2 放大。
-  static const int enlargeMs = 200;
+  /// fade-in 时长（ms）：提前显示后从 scale 0 → 1.0。
+  static const int fadeInMs = 300;
 
-  /// 消失阶段动画时长（ms）：1.2 → 0 缩小消失。
+  /// 消失阶段时长（ms）：间奏结束后 scale 1.0 → 0。
   static const int shrinkMs = 400;
+
+  /// AMLL 循环呼吸周期（ms）：3 个点相位错开，每 [breathPeriodMs] 完成一次循环。
+  static const int breathPeriodMs = 1500;
+
+  /// 3 个点的相位错开角度（弧度）：0, 2π/3, 4π/3。
+  static final List<double> dotPhases = [
+    0.0,
+    2 * math.pi / 3,
+    4 * math.pi / 3,
+  ];
 
   /// 间奏阈值：相邻行间隔 >= 此值才显示间奏点。
   /// 取自 [LyricLayout.interludeThresholdMs]。
@@ -44,28 +55,13 @@ class InterludeDots {
 
   // ============== 状态 ==============
 
-  /// 间奏起始时间（上一行 endTime）。
   int? _startTime;
-
-  /// 间奏结束时间（下一行 startTime - interludeEarlyEndMs）。
   int? _endTime;
-
-  /// 最近一次 tick 时间。
   int? _lastTickTime;
 
-  // ============== 阶段枚举 ==============
-
-  /// 间奏点当前所处阶段。
-  ///
-  /// - [InterludePhase.hidden]：未到显示时间，不绘制。
-  /// - [InterludePhase.enlarging]：间奏开始瞬间，1.0 → 1.2 放大中（200ms）。
-  /// - [InterludePhase.visible]：间奏进行中，保持 1.2 scale。
-  /// - [InterludePhase.shrinking]：间奏结束，1.2 → 0 缩小中（400ms）。
-  /// - [InterludePhase.collapsed]：已塌缩，占位行高度归零，不绘制。
   InterludePhase _phase = InterludePhase.hidden;
   InterludePhase get phase => _phase;
 
-  /// 阶段开始时间（ms），用于计算阶段内进度。
   int _phaseStartMs = 0;
 
   // ============== Getter ==============
@@ -73,30 +69,14 @@ class InterludeDots {
   int? get startTime => _startTime;
   int? get endTime => _endTime;
 
-  /// 占位行当前实际高度（用于塌缩动画）。
-  ///
-  /// - hidden / collapsed 阶段：返回 0（不占空间）。
-  /// - enlarging / visible / shrinking 阶段：返回 [fullLineHeight]。
-  ///   简化实现：不单独做塌缩高度动画，shrinking 结束后直接归零。
-  ///   若需要平滑塌缩，可在 shrinking 阶段按进度插值高度。
-  double fullLineHeight = 0;
-
-  /// 当前是否需要绘制（占位行有内容）。
-  ///
-  /// preview 阶段显示静态 1.0 scale 点，也需要绘制。
+  /// 当前是否需要绘制。
   bool get shouldRender =>
       _phase == InterludePhase.preview ||
-      _phase == InterludePhase.enlarging ||
       _phase == InterludePhase.visible ||
       _phase == InterludePhase.shrinking;
 
   // ============== 状态设置 ==============
 
-  /// 设置当前间奏时段。
-  ///
-  /// - [startTime] 间奏开始时间（上一行 endTime）。
-  /// - [endTime] 间奏结束时间（下一行 startTime 减去
-  ///   [LyricLayout.interludeEarlyEndMs]，本类不再二次扣减）。
   void setInterlude(int startTime, int endTime) {
     _startTime = startTime;
     _endTime = endTime;
@@ -104,7 +84,6 @@ class InterludeDots {
     _phaseStartMs = 0;
   }
 
-  /// 清除间奏。
   void clear() {
     _startTime = null;
     _endTime = null;
@@ -115,19 +94,14 @@ class InterludeDots {
 
   // ============== 时间推进 ==============
 
-  /// 推进时间，更新当前阶段。
+  /// 推进时间，更新阶段，返回应显示点数（3 或 0）。
   ///
-  /// 阶段转换逻辑：
-  /// - hidden → enlarging：当 `now >= startTime - advanceShowMs` 时进入。
-  ///   （但 enlarging 只在 `now >= startTime` 后才开始播放 200ms 放大动画；
-  ///   在 advanceShowMs ~ startTime 之间保持 visible 状态显示静态 1.0 scale。）
-  ///   **修正**：简化为——advanceShowMs 期间显示 1.0 scale 静态点，
-  ///   间奏开始瞬间（now >= startTime）开始 enlarging 放大 200ms。
-  /// - enlarging → visible：enlarging 播放完 200ms。
-  /// - visible → shrinking：当 `now >= endTime` 时进入。
-  /// - shrinking → collapsed：shrinking 播放完 400ms。
-  ///
-  /// 返回当前应显示的点数（3 或 0）。
+  /// 阶段转换：
+  /// - hidden → preview：`now >= start - advanceShowMs`，开始 fade-in。
+  /// - preview → visible：`now >= start`，进入循环呼吸。
+  /// - visible → shrinking：`now >= end`，开始缩小消失。
+  /// - shrinking → collapsed：shrink 播完 400ms。
+  /// - 任何阶段支持 seek 回退恢复。
   int tick(int currentTimeMs) {
     _lastTickTime = currentTimeMs;
     final start = _startTime;
@@ -139,59 +113,41 @@ class InterludeDots {
 
     switch (_phase) {
       case InterludePhase.hidden:
-        // 提前 advanceShowMs 显示静态点（1.0 scale）
         if (currentTimeMs >= start - advanceShowMs) {
           _phase = InterludePhase.preview;
           _phaseStartMs = currentTimeMs;
         }
         break;
       case InterludePhase.preview:
-        // 间奏开始 → 进入放大阶段
         if (currentTimeMs >= start) {
-          _phase = InterludePhase.enlarging;
+          _phase = InterludePhase.visible;
           _phaseStartMs = currentTimeMs;
         } else if (currentTimeMs < start - advanceShowMs) {
-          // 用户回退播放，回到 hidden
           _phase = InterludePhase.hidden;
         }
         break;
-      case InterludePhase.enlarging:
-        // 放大 200ms 完成 → visible
-        if (currentTimeMs >= _phaseStartMs + enlargeMs) {
-          _phase = InterludePhase.visible;
-        }
-        // 用户回退到间奏开始前 → 回到 preview
-        if (currentTimeMs < start) {
-          _phase = InterludePhase.preview;
-          _phaseStartMs = currentTimeMs;
-        }
-        break;
       case InterludePhase.visible:
-        // 间奏结束 → 进入缩小阶段
         if (currentTimeMs >= end) {
           _phase = InterludePhase.shrinking;
           _phaseStartMs = currentTimeMs;
-        }
-        // 用户回退到间奏开始前 → 回到 preview
-        if (currentTimeMs < start) {
+        } else if (currentTimeMs < start) {
           _phase = InterludePhase.preview;
           _phaseStartMs = currentTimeMs;
         }
         break;
       case InterludePhase.shrinking:
-        // 缩小 400ms 完成 → collapsed
         if (currentTimeMs >= _phaseStartMs + shrinkMs) {
           _phase = InterludePhase.collapsed;
         }
-        // 用户回退到间奏内 → 回到 visible
-        if (currentTimeMs < end && currentTimeMs >= start) {
+        if (currentTimeMs < end) {
           _phase = InterludePhase.visible;
+          _phaseStartMs = currentTimeMs;
         }
         break;
       case InterludePhase.collapsed:
-        // 塌缩后不再显示，除非用户回退
         if (currentTimeMs < end) {
           _phase = InterludePhase.visible;
+          _phaseStartMs = currentTimeMs;
         }
         break;
     }
@@ -199,7 +155,6 @@ class InterludeDots {
     return shouldRender ? 3 : 0;
   }
 
-  /// 判断某时刻是否处于间奏中（间奏开始到结束之间）。
   bool isInterlude(int currentTimeMs) {
     final start = _startTime;
     final end = _endTime;
@@ -207,13 +162,11 @@ class InterludeDots {
     return currentTimeMs >= start && currentTimeMs < end;
   }
 
-  /// 计算当前 scale（0 ~ 1.2）。
+  /// 计算整体 scale（0 ~ 1.0）。
   ///
-  /// - preview：1.0（静态显示）
-  /// - enlarging：1.0 → 1.2（200ms 线性）
-  /// - visible：1.2
-  /// - shrinking：1.2 → 0（400ms 线性）
-  /// - hidden / collapsed：0
+  /// - preview 阶段：0 → 1.0 fade-in（300ms）
+  /// - visible 阶段：1.0
+  /// - shrinking 阶段：1.0 → 0（400ms）
   @visibleForTesting
   double currentScale(int currentTimeMs) {
     switch (_phase) {
@@ -221,29 +174,45 @@ class InterludeDots {
       case InterludePhase.collapsed:
         return 0;
       case InterludePhase.preview:
-        return 1.0;
-      case InterludePhase.enlarging:
         final progress =
-            ((currentTimeMs - _phaseStartMs) / enlargeMs).clamp(0.0, 1.0);
-        return 1.0 + 0.2 * progress;
+            ((currentTimeMs - _phaseStartMs) / fadeInMs).clamp(0.0, 1.0);
+        return progress;
       case InterludePhase.visible:
-        return 1.2;
+        return 1.0;
       case InterludePhase.shrinking:
         final progress =
             ((currentTimeMs - _phaseStartMs) / shrinkMs).clamp(0.0, 1.0);
-        return 1.2 * (1 - progress);
+        return 1.0 - progress;
     }
   }
 
-  /// 绘制 3 个间奏点（AMLL 规范：白色小圆点居中横排）。
+  /// 计算指定点的当前亮度（0.4 ~ 1.0，AMLL 循环呼吸）。
   ///
-  /// - [centerY]：占位行的垂直中心 y 坐标（随歌词滚动）。
-  /// - [centerX]：占位行水平中心 x 坐标（通常为视口宽度 / 2）。
-  /// - [dotRadius]：单点基准半径（默认 4px）。
-  /// - [spacing]：点间距（默认 16px）。
+  /// - 非可见阶段：返回 [baseAlpha]（0.4）
+  /// - 可见阶段：`0.4 + 0.6 * (sin(phase + 2π * t / period) * 0.5 + 0.5)`
+  ///   t = 间奏内相对时间（ms），period=1500ms
+  @visibleForTesting
+  double dotIntensity(int dotIndex, int currentTimeMs) {
+    if (_phase != InterludePhase.visible) {
+      return 0.4;
+    }
+    final start = _startTime ?? currentTimeMs;
+    final t = (currentTimeMs - start).toDouble();
+    final phase = dotPhases[dotIndex % 3];
+    final omega = 2 * math.pi / breathPeriodMs;
+    final wave = math.sin(phase + omega * t) * 0.5 + 0.5;
+    return 0.4 + 0.6 * wave;
+  }
+
+  /// 绘制 3 个间奏点（AMLL 规范：白色小圆点左对齐横排）。
+  ///
+  /// - [startX]：左边距（与歌词文字 startX 一致）
+  /// - [centerY]：占位行的垂直中心 y 坐标（随歌词滚动）
+  /// - [dotRadius]：单点基准半径（默认 4px）
+  /// - [spacing]：点间距（默认 16px）
   void paintAtLineY(
     Canvas canvas,
-    double centerX,
+    double startX,
     double centerY, {
     double dotRadius = 4,
     double spacing = 16,
@@ -253,20 +222,19 @@ class InterludeDots {
     final scale = currentScale(now);
     if (scale <= 0) return;
 
-    final paint = Paint()
-      ..style = PaintingStyle.fill
-      ..color = const Color.fromRGBO(255, 255, 255, 1.0);
-
     final r = dotRadius * scale;
     for (var i = 0; i < 3; i++) {
-      final dx = centerX + (i - 1) * spacing;
+      final intensity = dotIntensity(i, now);
+      final dx = startX + i * spacing + r;
       final dy = centerY;
+      final paint = Paint()
+        ..style = PaintingStyle.fill
+        ..color = Color.fromRGBO(255, 255, 255, intensity * scale);
       canvas.drawCircle(Offset(dx, dy), r, paint);
     }
   }
 
-  /// 兼容旧接口 [paint]：转发到 [paintAtLineY]。
-  /// 旧调用方传 `Offset(centerX, centerY)` 作为 center。
+  /// 兼容旧接口 [paint]，转发到 [paintAtLineY]（center 作为左对齐起点）。
   void paint(
     Canvas canvas,
     Offset center,
@@ -283,23 +251,10 @@ class InterludeDots {
   }
 }
 
-/// 间奏点动画阶段。
 enum InterludePhase {
-  /// 未到显示时间。
   hidden,
-
-  /// 提前显示阶段（间奏开始前 3000ms）：静态 1.0 scale。
   preview,
-
-  /// 放大阶段（间奏开始瞬间，200ms）：1.0 → 1.2。
-  enlarging,
-
-  /// 可见阶段（间奏进行中）：保持 1.2 scale。
   visible,
-
-  /// 缩小阶段（间奏结束后，400ms）：1.2 → 0。
   shrinking,
-
-  /// 已塌缩，占位行高度归零。
   collapsed,
 }
