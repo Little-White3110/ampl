@@ -161,14 +161,34 @@ jobs:
         shell: bash
         run: |
           set -e
-          echo "==> 下载 native-libs.zip（来自 md3Music 上游 Release）"
-          curl -L --fail -o native-libs.zip \
-            "https://github.com/zzyoxml/md3Music/releases/latest/download/native-libs.zip"
-          echo "==> 解压到 android/app/src/main/"
-          unzip -o native-libs.zip -d android/app/src/main/
+          echo "==> 上游 zzyoxml/md3Music Release 未发布 native-libs.zip"
+          echo "==> 改为从上游 Release APK 提取 libnode.so，并从 nodejs.org 下载 v18 头文件"
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p android/app/src/main/jniLibs/armeabi-v7a
+          mkdir -p android/app/src/main/jniLibs/x86_64
+
+          # 下载 3 个 APK 并提取 lib/<abi>/libnode.so
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            echo "==> 下载 app-${abi}-release.apk"
+            curl -L --fail -o "app-${abi}.apk" \
+              "https://github.com/zzyoxml/md3Music/releases/latest/download/app-${abi}-release.apk"
+            echo "==> 提取 lib/${abi}/libnode.so"
+            unzip -j "app-${abi}.apk" "lib/${abi}/libnode.so" \
+              -d "android/app/src/main/jniLibs/${abi}/"
+            ls -la "android/app/src/main/jniLibs/${abi}/"
+            rm "app-${abi}.apk"
+          done
+
+          # 下载 Node.js v18 头文件（nodejs-mobile 基于 Node.js 18）
+          echo "==> 下载 Node.js v18 头文件"
+          mkdir -p android/app/src/main/cpp/include/node
+          curl -L --fail \
+            "https://nodejs.org/dist/v18.20.4/node-v18.20.4-headers.tar.gz" \
+            | tar xz --strip-components=1 -C android/app/src/main/cpp/include/node
+
           echo "==> 校验 jniLibs 与 cpp/include"
-          ls android/app/src/main/jniLibs || { echo "jniLibs 缺失"; exit 1; }
-          ls android/app/src/main/cpp/include 2>/dev/null || echo "(warn) cpp/include 不存在"
+          ls android/app/src/main/jniLibs/*/
+          ls android/app/src/main/cpp/include/node/node.h
 
       - name: Build APK for ${{ matrix.abi }}
         run: |
