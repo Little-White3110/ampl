@@ -77,6 +77,14 @@ class InterludeDots {
   // ============== 状态设置 ==============
 
   void setInterlude(int startTime, int endTime) {
+    // 性能/bug 修复：本方法会被 _updateInterlude 每帧调用。
+    // 如果 startTime/endTime 与当前相同，说明是同一个间奏，
+    // 不能重置 _phase（否则 tick 永远从 hidden 开始，间奏点永远不显示）。
+    // 只有切换到新间奏时才重置状态。
+    final bool isSameInterlude =
+        _startTime == startTime && _endTime == endTime;
+    if (isSameInterlude) return;
+
     _startTime = startTime;
     _endTime = endTime;
     _phase = InterludePhase.hidden;

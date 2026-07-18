@@ -172,11 +172,16 @@ class WordRenderer {
   /// - 非当前行：所有 word Y=0（不上浮）。
   /// - 当前行：
   ///   - 已播字（index < 当前 word 索引）：Y=_maxLiftPx（保持上浮，不回落）。
-  ///   - 当前字（index == 当前 word 索引）：按 word 内进度 0 → _maxLiftPx 线性上浮。
+  ///   - 当前字（index == 当前 word 索引）：按 word 内进度 0 → _maxLiftPx 上浮。
+  ///     **使用 smoothstep 曲线（ease-in-out）**：`t' = t*t*(3-2*t)`
+  ///     起步和结束更柔，避免线性变化的生硬感。
   ///   - 未播字（index > 当前 word 索引）：Y=0。
   ///
   /// 用户确认（grill-me Q2 (A) AMLL 原版）：已播字保持上浮状态，
   /// 营造整行从左到右逐渐浮起的效果，而非"弹一下回落"。
+  ///
+  /// 用户反馈（grill-me 第三轮）：上浮动画不够细腻，一顿一顿的。
+  /// 改用 smoothstep 曲线让起步和结束更平滑。
   double _targetYOffsetFor(int index, int wordCount) {
     if (!_isActive) return 0;
     final double wordPos = _currentLineProgress * wordCount;
@@ -186,9 +191,11 @@ class WordRenderer {
       return _maxLiftPx;
     }
     if (index == currentIdx) {
-      // 当前 word 内进度 0~1，上浮幅度从 0 → _maxLiftPx 线性
+      // 当前 word 内进度（0~1），用 smoothstep 曲线（ease-in-out）
+      // smoothstep: t*t*(3-2*t)，起步和结束更柔
       final double wp = wordPos - currentIdx;
-      return _maxLiftPx * wp;
+      final double eased = wp * wp * (3 - 2 * wp);
+      return _maxLiftPx * eased;
     }
     // 未播字：不上浮
     return 0;

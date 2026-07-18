@@ -508,8 +508,13 @@ class _FullPlayerState extends State<FullPlayer>
                   final size = constraints.maxWidth.clamp(120.0, 300.0);
                   return Center(
                     child: SizedBox(
-                      width: size,
-                      height: size,
+                    width: size,
+                    height: size,
+                    // 横屏封面缩放动画（与竖屏一致，暂停 0.85 / 播放 1.0 带回弹）
+                    child: AnimatedScale(
+                      scale: playerProvider.isPlaying ? 1.0 : 0.85,
+                      duration: const Duration(milliseconds: 500),
+                      curve: Curves.easeOutBack,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(16),
                         child: currentSong.artworkUri != null
@@ -533,10 +538,11 @@ class _FullPlayerState extends State<FullPlayer>
                                   borderRadius: BorderRadius.circular(16),
                                 ),
                                 child: Icon(Icons.music_note,
-                                  size: 48, color: Colors.white54),
+                                    size: 48, color: Colors.white54),
                               ),
                       ),
                     ),
+                  ),
                   );
                 },
               ),
@@ -760,40 +766,50 @@ class _FullPlayerState extends State<FullPlayer>
                   ),
                   child: AspectRatio(
                     aspectRatio: 1,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: currentSong.artworkUri != null
-                          ? CachedNetworkImage(
-                              imageUrl: currentSong.artworkUri!,
-                              fit: BoxFit.cover,
-                              placeholder: (_, _) => Container(
-                                color: Colors.white12,
+                    // 专辑封面缩放动画（grill-me 第三轮）：
+                    // 暂停时 scale=0.85，播放时 scale=1.0，带超出回弹效果。
+                    // 用 AnimatedScale + easeOutBack 曲线，overshoot 约 1.7，
+                    // 暂停→播放：1.0 ← 0.85（中间略超 1.05），营造"放大回弹"感
+                    // 播放→暂停：0.85 ← 1.0（中间略低 0.8），营造"缩小回弹"感
+                    child: AnimatedScale(
+                      scale: playerProvider.isPlaying ? 1.0 : 0.85,
+                      duration: const Duration(milliseconds: 500),
+                      curve: Curves.easeOutBack,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: currentSong.artworkUri != null
+                            ? CachedNetworkImage(
+                                imageUrl: currentSong.artworkUri!,
+                                fit: BoxFit.cover,
+                                placeholder: (_, _) => Container(
+                                  color: Colors.white12,
+                                  child: Icon(
+                                    Icons.music_note,
+                                    size: iconSize,
+                                    color: Colors.white54,
+                                  ),
+                                ),
+                                errorWidget: (_, _, _) => Container(
+                                  color: Colors.white12,
+                                  child: Icon(
+                                    Icons.music_note,
+                                    size: iconSize,
+                                    color: Colors.white54,
+                                  ),
+                                ),
+                              )
+                            : Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white12,
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
                                 child: Icon(
                                   Icons.music_note,
                                   size: iconSize,
                                   color: Colors.white54,
                                 ),
                               ),
-                              errorWidget: (_, _, _) => Container(
-                                color: Colors.white12,
-                                child: Icon(
-                                  Icons.music_note,
-                                  size: iconSize,
-                                  color: Colors.white54,
-                                ),
-                              ),
-                            )
-                          : Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white12,
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Icon(
-                                Icons.music_note,
-                                size: iconSize,
-                                color: Colors.white54,
-                              ),
-                            ),
+                      ),
                     ),
                   ),
                 );

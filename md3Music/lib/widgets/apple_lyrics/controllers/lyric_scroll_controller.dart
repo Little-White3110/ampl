@@ -168,8 +168,28 @@ class LyricScrollController {
   /// 用户滚动结束
   ///
   /// 从此时起开始 5000ms 倒计时，到时自动回弹到当前行。
-  void onUserScrollEnd() {
+  ///
+  /// **惯性滚动（AMLL 标准）**：松手时根据 [velocity] 计算惯性距离，
+  /// 让歌词继续滑动一段再停下，营造自然物理感。
+  /// - velocity 单位：px/s（来自 DragEndDetails.velocity.pixelsPerSecond.dy）
+  /// - 惯性距离 = velocity * 0.3s，clamp 到 [-300, 300] px
+  /// - 用 spring 的 velocity 注入 + target 偏移实现衰减
+  void onUserScrollEnd({double velocity = 0}) {
     _isUserScrolling = false;
+
+    // 注入惯性：松手时根据速度让歌词继续滑动一段距离
+    // 距离 = velocity * 0.3s，clamp 到 ±300px（AMLL 标准 200-400px）
+    final double inertiaDistance =
+        (velocity * 0.3).clamp(-300.0, 300.0);
+    if (inertiaDistance.abs() > 5) {
+      // 用当前位置 + 惯性距离作为新 target，并注入速度
+      // setPosition 会把 target 设为 position，所以先 setPosition 注入速度，
+      // 再 setTarget 偏移 target（setTarget 会保留当前 velocity）
+      final double currentPos = _posYSpring.position;
+      _posYSpring.setPosition(currentPos, velocity);
+      _posYSpring.setTarget(currentPos + inertiaDistance);
+    }
+
     // 仅在尚未回弹时重置倒计时
     if (!_autoReturned) {
       _autoReturnRemainingMs = LyricLayout.autoReturnMs.toDouble();

@@ -369,7 +369,10 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   }
 
   void _onVerticalDragEnd(DragEndDetails details) {
-    _scrollController.onUserScrollEnd();
+    // 传递松手时的垂直速度给 scrollController，用于惯性滚动
+    // velocity.pixelsPerSecond.dy 单位 px/s，向下为正
+    _scrollController.onUserScrollEnd(
+        velocity: details.velocity.pixelsPerSecond.dy);
   }
 
   // ============== 构建 ==============
