@@ -1,0 +1,41 @@
+- [x] Lyricon Provider SDK 依赖 `io.github.proify.lyricon:provider:0.1.70` 已添加到 `md3Music/android/app/build.gradle.kts`
+- [x] `AndroidManifest.xml` 的 `<application>` 节点包含 `lyricon_module=true` meta-data
+- [x] `AndroidManifest.xml` 的 `<application>` 节点包含 `lyricon_module_author=md3music` meta-data
+- [x] `AndroidManifest.xml` 的 `<application>` 节点包含 `lyricon_module_description=MD3Music Lyricon Provider` meta-data
+- [x] `AndroidManifest.xml` 的 `<application>` 节点包含 `lyricon_module_tags` meta-data 引用 `@array/lyricon_module_tags`
+- [x] `res/values/arrays.xml` 中存在 `lyricon_module_tags` 字符串数组，包含 `$syllable` 和 `$translation`
+- [x] `flutter build apk --debug` 能成功打包，无 Gradle 同步错误
+- [x] `AudioPlaybackService.onCreate()` 中创建 `LyriconProvider` 实例并设置 `autoSync = true`
+- [x] `AudioPlaybackService` 注册了 ConnectionListener，四个回调（onConnected/onReconnected/onDisconnected/onConnectTimeout）能反向回传到 Dart
+- [x] `AudioPlaybackService.onDestroy()` 调用 `provider.unregister()` + `provider.destroy()`
+- [x] `AudioPlaybackService.showNotification()` 中 `mediaSession.setPlaybackState()` 后同步调用 `provider.player.setPlaybackState(state)`
+- [x] `MainActivity.configureFlutterEngine()` 注册了 `com.md3music.md3music/lyricon` MethodChannel handler
+- [x] lyricon channel 的 8 个方法全部实现：`setEnabled` / `setSong` / `sendText` / `setPosition` / `setPlaybackState` / `seekTo` / `setDisplayTranslation` / `setDisplayRoma`
+- [x] `setEnabled(true)` 触发 `provider.register()`，`setEnabled(false)` 触发 `provider.unregister()`
+- [x] `setSong` 收到 Map 参数时正确构造 `Song` + `RichLyricLine` + `LyricWord` 对象；收到 null 时调用 `setSong(null)`
+- [x] 新建 `md3Music/lib/core/services/lyricon_provider_service.dart`，单例结构
+- [x] Dart Service 持有 `MethodChannel('com.md3music.md3music/lyricon')` 并设置反向回调接收 `onConnectionStateChanged`
+- [x] Dart Service 暴露 `setEnabled` / `setSong` / `seekTo` / `setPosition` / `setDisplayTranslation` / `setDisplayRoma` 方法
+- [x] `LyricLine` / `LyricWord` 模型正确转换为 Map 结构（含 `begin` / `end` / `text` / `words`）
+- [x] `ConnectionState` 枚举包含 disabled / connecting / connected / disconnected / timeout 五种状态
+- [x] `SettingsRepository` 新增 `getLyriconEnabled` / `setLyriconEnabled`（默认 false）
+- [x] `SettingsRepository` 新增 `getLyriconDisplayTranslation` / `setLyriconDisplayTranslation`（默认 true）
+- [x] `SettingsRepository` 新增 `getLyriconDisplayRoma` / `setLyriconDisplayRoma`（默认 false）
+- [x] 设置页新增「Lyricon 词幕推送」SwitchListTile，默认关
+- [x] 开关下方有 Text 显示当前连接状态（未启用 / 连接中... / 已连接 / 已断开 / 连接超时）
+- [x] 开关变化时调用 `LyriconProviderService.setEnabled` 并持久化
+- [x] 设置页通过 `addListener` 订阅状态变化，离开时 `removeListener`
+- [x] 设置页新增「翻译歌词」「罗马音」两个次级 SwitchListTile
+- [x] `main.dart` 启动时调用 `LyriconProviderService.instance.initialize()`
+- [x] `PlayerProvider.seekTo(pos)` 路径上追加 `LyriconProviderService.instance.seekTo(pos.inMilliseconds)`
+- [x] PlayerProvider 切歌时调用 `LyriconProviderService.instance.onSongChanged(...)`，复用 `LyricParserChain.parse` 结果
+- [x] Lyricon 推送有节流：进度同步 ≥500ms 一次，setSong 仅切歌时调用
+- [x] 同时开启自研桌面歌词与 Lyricon 推送，两者独立工作互不影响
+- [x] 关闭 Lyricon 推送后自研浮窗不受影响
+- [x] 关闭自研浮窗后 Lyricon 推送不受影响
+- [x] Android 8.1 以下设备 Provider SDK 空实现不崩溃
+- [x] 项目根目录新建 `LYRICON_INTEGRATION.md`
+- [x] 文档「用户使用说明」部分包含：Lyricon 介绍、安装步骤、LSPosed 作用域配置、LocalCentralService 本地测试、FAQ
+- [x] 文档「开发者集成文档」部分包含：架构设计、Provider 生命周期、MethodChannel 协议表、故障定位
+- [x] 文档明确说明 Provider 应用本身不需要 LSPosed 挂载，需要 LSPosed 激活的是 Lyricon 应用本身
+- [x] 文档说明把 md3music 加入 Lyricon 的 LSPosed 作用域的步骤

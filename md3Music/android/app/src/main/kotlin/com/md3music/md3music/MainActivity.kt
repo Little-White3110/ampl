@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
@@ -191,6 +192,107 @@ class MainActivity : FlutterActivity() {
                     }
                     startService(intent)
                     result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        // 注册 Lyricon Provider MethodChannel，让 Dart 端能控制 Lyricon 播放器
+        val lyriconChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.md3music.md3music/lyricon"
+        )
+        AudioPlaybackService.setLyriconChannel(lyriconChannel)
+        lyriconChannel.setMethodCallHandler { call, result ->
+            val provider = AudioPlaybackService.getLyriconProvider()
+            when (call.method) {
+                "setEnabled" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    try {
+                        if (enabled) provider?.register() else provider?.unregister()
+                        result.success(true)
+                    } catch (_: Exception) {
+                        result.success(false)
+                    }
+                }
+                "setSong" -> {
+                    val arg = call.argument<Map<String, Any?>>("song")
+                    if (arg == null) {
+                        try {
+                            provider?.player?.setSong(null)
+                            result.success(true)
+                        } catch (_: Exception) {
+                            result.success(false)
+                        }
+                    } else {
+                        try {
+                            val song = AudioPlaybackService.buildLyriconSong(arg)
+                            provider?.player?.setSong(song)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("BUILD_SONG_FAILED", e.message, null)
+                        }
+                    }
+                }
+                "sendText" -> {
+                    val text = call.argument<String>("text")
+                    try {
+                        provider?.player?.sendText(text)
+                        result.success(true)
+                    } catch (_: Exception) {
+                        result.success(false)
+                    }
+                }
+                "setPosition" -> {
+                    val pos = call.argument<Number>("positionMs")?.toLong() ?: 0L
+                    try {
+                        provider?.player?.setPosition(pos)
+                        result.success(true)
+                    } catch (_: Exception) {
+                        result.success(false)
+                    }
+                }
+                "setPlaybackState" -> {
+                    val state = call.argument<Number>("state")?.toInt()
+                        ?: PlaybackStateCompat.STATE_NONE
+                    val pos = call.argument<Number>("position")?.toLong() ?: 0L
+                    val speed = call.argument<Number>("speed")?.toFloat() ?: 1f
+                    try {
+                        val pb = PlaybackStateCompat.Builder()
+                            .setState(state, pos, speed)
+                            .build()
+                        provider?.player?.setPlaybackState(pb)
+                        result.success(true)
+                    } catch (_: Exception) {
+                        result.success(false)
+                    }
+                }
+                "seekTo" -> {
+                    val pos = call.argument<Number>("positionMs")?.toLong() ?: 0L
+                    try {
+                        provider?.player?.seekTo(pos)
+                        result.success(true)
+                    } catch (_: Exception) {
+                        result.success(false)
+                    }
+                }
+                "setDisplayTranslation" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    try {
+                        provider?.player?.setDisplayTranslation(enabled)
+                        result.success(true)
+                    } catch (_: Exception) {
+                        result.success(false)
+                    }
+                }
+                "setDisplayRoma" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    try {
+                        provider?.player?.setDisplayRoma(enabled)
+                        result.success(true)
+                    } catch (_: Exception) {
+                        result.success(false)
+                    }
                 }
                 else -> result.notImplemented()
             }
