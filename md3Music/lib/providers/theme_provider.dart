@@ -54,12 +54,14 @@ class ThemeProvider extends ChangeNotifier {
   }
 
   /// 通过 dynamic_color 插件获取 Android 12+ 系统调色板。
-  /// 取 palette.primary 作为种子色。低于 Android 12 返回 null → 自动回退默认种子。
+  /// 取 palette.primary 的 tone 40 作为种子色（Material 3 中 tone 40 是默认 primary 色）。
+  /// 低于 Android 12 返回 null → 自动回退默认种子。
   Future<void> _loadSystemColor() async {
     try {
       final palette = await DynamicColorPlugin.getCorePalette();
-      if (palette != null && palette.primary != null) {
-        _systemSeedColor = Color(palette.primary!);
+      if (palette != null) {
+        // CorePalette.primary 是 TonalPalette（非空），用 get(40) 取 ARGB int
+        _systemSeedColor = Color(palette.primary.get(40));
       } else {
         _systemSeedColor = null;
       }
