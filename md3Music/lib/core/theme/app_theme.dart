@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 class AppTheme {
   AppTheme._();
 
-  static const Color _seedColor = Color(0xFF6750A4);
+  /// 默认种子色（紫色），用于未启用系统主题色时的兜底。
+  static const Color defaultSeedColor = Color(0xFF6750A4);
 
   // CJK 字体回退链 - 按平台优先级排序:
   // 1) Web 浏览器(Windows + Edge) 优先用系统自带的 "Microsoft YaHei" (无需下载)
@@ -29,7 +30,7 @@ class AppTheme {
 
   static ThemeData get lightTheme {
     final colorScheme = ColorScheme.fromSeed(
-      seedColor: _seedColor,
+      seedColor: defaultSeedColor,
       brightness: Brightness.light,
     );
     return _buildTheme(colorScheme, Brightness.light);
@@ -37,7 +38,27 @@ class AppTheme {
 
   static ThemeData get darkTheme {
     final colorScheme = ColorScheme.fromSeed(
-      seedColor: _seedColor,
+      seedColor: defaultSeedColor,
+      brightness: Brightness.dark,
+    );
+    return _buildTheme(colorScheme, Brightness.dark);
+  }
+
+  /// 根据传入的种子色构建浅色主题。
+  ///
+  /// 用于「莫奈色」开关启用时，由 ThemeProvider 传入系统提取的主色。
+  static ThemeData lightThemeFromSeed(Color seedColor) {
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: seedColor,
+      brightness: Brightness.light,
+    );
+    return _buildTheme(colorScheme, Brightness.light);
+  }
+
+  /// 根据传入的种子色构建深色主题。
+  static ThemeData darkThemeFromSeed(Color seedColor) {
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: seedColor,
       brightness: Brightness.dark,
     );
     return _buildTheme(colorScheme, Brightness.dark);

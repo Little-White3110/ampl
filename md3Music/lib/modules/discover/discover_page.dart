@@ -8,6 +8,7 @@ import '../../providers/kugou_provider.dart';
 import '../../providers/player_provider.dart';
 import '../../widgets/album_card.dart';
 import '../../widgets/app_animation.dart';
+import '../../widgets/scroll_aware_app_bar.dart';
 import '../../widgets/song_list_item.dart';
 import '../charts/charts_page.dart';
 import '../playlist/playlist_page.dart';
@@ -25,6 +26,15 @@ class _DiscoverPageState extends State<DiscoverPage> {
 
   bool _isLoading = true;
   String? _error;
+
+  /// 顶栏渐变 ScrollController：与 ScrollAwareAppBar 共享，监听滚动 offset
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -130,11 +140,9 @@ class _DiscoverPageState extends State<DiscoverPage> {
     final textTheme = Theme.of(context).textTheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          'MD3Music',
-          style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
-        ),
+      appBar: ScrollAwareAppBar(
+        title: 'MD3Music',
+        scrollController: _scrollController,
         actions: [
           IconButton(
             icon: const Icon(Icons.search),
@@ -157,6 +165,7 @@ class _DiscoverPageState extends State<DiscoverPage> {
             : _error != null
             ? _buildError(colorScheme)
             : CustomScrollView(
+                controller: _scrollController,
                 slivers: [
                   _buildBannerSection(colorScheme),
                   _buildDailySection(colorScheme),

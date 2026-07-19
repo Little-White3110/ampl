@@ -1,15 +1,32 @@
+import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/theme/app_theme.dart';
+
 class ThemeProvider extends ChangeNotifier {
   static const String _key = 'theme_mode';
+  static const String _dynamicKey = 'use_dynamic_color';
 
   ThemeMode _themeMode = ThemeMode.system;
+  bool _useDynamicColor = false;
+  Color? _systemSeedColor;
 
   ThemeMode get themeMode => _themeMode;
+  bool get useDynamicColor => _useDynamicColor;
+  Color? get systemSeedColor => _systemSeedColor;
+
+  /// 当前生效的种子色：
+  /// - 启用系统主题色且成功取到 → 系统主色
+  /// - 否则 → 默认紫色种子
+  Color get effectiveSeedColor =>
+      _useDynamicColor && _systemSeedColor != null
+          ? _systemSeedColor!
+          : AppTheme.defaultSeedColor;
 
   ThemeProvider() {
     _loadThemeMode();
+    _loadDynamicColor();
   }
 
   Future<void> _loadThemeMode() async {
@@ -24,6 +41,43 @@ class ThemeProvider extends ChangeNotifier {
   Future<void> _saveThemeMode(ThemeMode mode) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_key, mode.index);
+  }
+
+  /// 加载「使用系统主题色」开关持久化值，若开启则同步提取系统主色。
+  Future<void> _loadDynamicColor() async {
+    final prefs = await SharedPreferences.getInstance();
+    _useDynamicColor = prefs.getBool(_dynamicKey) ?? false;
+    if (_useDynamicColor) {
+      await _loadSystemColor();
+    }
+    notifyListeners();
+  }
+
+  /// 通过 dynamic_color 插件获取 Android 12+ 系统调色板。
+  /// 取 palette.primary 作为种子色。低于 Android 12 返回 null → 自动回退默认种子。
+  Future<void> _loadSystemColor() async {
+    try {
+      final palette = await DynamicColorPlugin.getCorePalette();
+      if (palette != null && palette.primary != null) {
+        _systemSeedColor = Color(palette.primary!);
+      } else {
+        _systemSeedColor = null;
+      }
+    } catch (_) {
+      _systemSeedColor = null;
+    }
+  }
+
+  /// 切换「使用系统主题色」开关。
+  Future<void> setUseDynamicColor(bool enabled) async {
+    if (_useDynamicColor == enabled) return;
+    _useDynamicColor = enabled;
+    if (enabled) {
+      await _loadSystemColor();
+    }
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_dynamicKey, enabled);
   }
 
   void toggleTheme() {

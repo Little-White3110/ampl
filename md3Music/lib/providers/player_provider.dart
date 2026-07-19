@@ -818,7 +818,8 @@ class PlayerProvider extends ChangeNotifier {
       return createAudioSourceWeb(
         id: song.id,
         url: playbackUrl ?? '',
-        title: song.title,
+        // 使用 displayName 剥离 .mp3 等扩展名，避免系统通知栏/锁屏显示后缀
+        title: song.displayName,
         artist: song.artist,
         album: song.album,
         artUri: song.artworkUri != null ? Uri.parse(song.artworkUri!) : null,
@@ -827,7 +828,8 @@ class PlayerProvider extends ChangeNotifier {
     return createAudioSource(
       id: song.id,
       url: playbackUrl ?? '',
-      title: song.title,
+      // 使用 displayName 剥离 .mp3 等扩展名，避免系统通知栏/锁屏显示后缀
+      title: song.displayName,
       artist: song.artist,
       album: song.album,
       artUri: song.artworkUri != null ? Uri.parse(song.artworkUri!) : null,

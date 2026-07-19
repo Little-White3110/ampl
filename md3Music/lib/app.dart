@@ -62,7 +62,10 @@ class _AppView extends StatelessWidget {
     return MaterialApp(
       title: 'MD3Music',
       debugShowCheckedModeBanner: false,
-      darkTheme: AppTheme.darkTheme,
+      // 同时传 theme 和 darkTheme，并根据 ThemeProvider.effectiveSeedColor
+      // 动态生成（支持「莫奈色」开关切换系统主色）。
+      theme: AppTheme.lightThemeFromSeed(themeProvider.effectiveSeedColor),
+      darkTheme: AppTheme.darkThemeFromSeed(themeProvider.effectiveSeedColor),
       themeMode: themeProvider.themeMode,
       navigatorKey: appNavigatorKey,
       initialRoute: '/',
@@ -247,18 +250,18 @@ class _MainLayoutState extends State<_MainLayout> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    // 让系统返回键先走 Navigator 栈（关掉 sub-page / pop dialog），
-    // 栈空了再弹"退出应用"确认对话框，避免在子页面按返回就直接弹退出。
+    // 启用预测性返回（Predictive Back）：
+    // - canPop: true 让系统启动边缘滑动预测动画，子路由自动 pop
+    // - 栈空时 onPopInvokedWithResult 被调用且 didPop 为 true，
+    //   此时弹出退出确认对话框，让用户选择是否真的退出
     return PopScope(
-      canPop: false,
+      canPop: true,
       onPopInvokedWithResult: (didPop, result) {
+        // didPop 为 true 表示路由已 pop（栈空时系统会执行 activity back）
+        // 这里在 activity back 完成前拦截，弹退出确认框
         if (didPop) return;
-        final nav = appNavigatorKey.currentState;
-        if (nav != null && nav.canPop()) {
-          nav.pop();
-          return;
-        }
-        _showExitDialog();
+        // canPop: true 时 didPop 永远为 true，不会进入此分支
+        // 保留兜底：栈非空时不弹退出框
       },
       child: ResponsiveScaffold(
         destinations: _destinations,

@@ -32,6 +32,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _isTestingConnection = false;
   String? _connectionResult;
   bool _autoReceiveVip = true;
+  bool _useDynamicColor = false;
   String _appVersion = '';
 
   @override
@@ -52,12 +53,15 @@ class _SettingsPageState extends State<SettingsPage> {
     final quality = await _settingsRepository.getDefaultQuality();
     final autoReceiveVip = await _settingsRepository.getAutoReceiveVip();
     final apiServerUrl = await _settingsRepository.getApiServerUrl();
+    // 从 ThemeProvider 同步「使用系统主题色」开关状态
+    final useDynamicColor = context.read<ThemeProvider>().useDynamicColor;
 
     setState(() {
       _themeMode = themeMode;
       _defaultQuality = quality;
       _autoReceiveVip = autoReceiveVip;
       _apiServerController.text = apiServerUrl;
+      _useDynamicColor = useDynamicColor;
     });
   }
 
@@ -222,6 +226,15 @@ class _SettingsPageState extends State<SettingsPage> {
               _settingsRepository.setThemeMode(mode);
             },
           ),
+        ),
+        SwitchListTile(
+          title: const Text('使用系统主题色'),
+          subtitle: const Text('跟随系统壁纸取色（Android 12+ 莫奈色）'),
+          value: _useDynamicColor,
+          onChanged: (v) {
+            setState(() => _useDynamicColor = v);
+            context.read<ThemeProvider>().setUseDynamicColor(v);
+          },
         ),
         const SizedBox(height: 8),
       ],

@@ -30,6 +30,7 @@ dependencies:
   package_info_plus: ^8.2.0
   ffi: ^2.1.0
   palette_generator: ^0.3.3+7
+  dynamic_color: ^1.7.0
 
 dev_dependencies:
   flutter_test:

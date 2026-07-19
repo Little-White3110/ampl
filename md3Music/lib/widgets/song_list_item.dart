@@ -7,6 +7,7 @@ import '../providers/downloads_provider.dart';
 import '../providers/favorites_provider.dart';
 import '../providers/player_provider.dart';
 import '../services/kugou_api/kugou_api_client.dart';
+import 'playing_spectrum_indicator.dart';
 
 class SongListItem extends StatelessWidget {
   final Song song;
@@ -227,9 +228,10 @@ class SongListItem extends StatelessWidget {
                 if (isCurrentSong && playerProvider.isPlaying)
                   Padding(
                     padding: const EdgeInsets.only(right: 2),
-                    child: SizedBox(
-                      width: 13, height: 13,
-                      child: CircularProgressIndicator(strokeWidth: 1.5, color: colorScheme.primary),
+                    // 频谱动画标识：3 根粒度柱 sin 波动
+                    child: PlayingSpectrumIndicator(
+                      color: colorScheme.primary,
+                      size: 14,
                     ),
                   )
                 else if (isCurrentSong)
