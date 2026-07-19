@@ -88,33 +88,32 @@ class AudioPlaybackService : Service() {
 
         /** 由 MainActivity 的 lyricon channel handler 调用，把 Dart 端 Map 转成 SDK 的 Song */
         fun buildLyriconSong(arg: Map<String, Any?>): Song {
-            // 使用无参构造 + setter，避免 SDK 构造函数参数顺序与命名参数不匹配
-            val song = Song()
-            song.id = arg["id"] as? String ?: ""
-            song.name = arg["name"] as? String ?: ""
-            song.artist = arg["artist"] as? String ?: ""
-            song.duration = (arg["duration"] as? Number)?.toLong() ?: 0L
             @Suppress("UNCHECKED_CAST")
             val lyricsRaw = arg["lyrics"] as? List<Map<String, Any?>> ?: emptyList()
-            song.lyrics = lyricsRaw.map { line ->
-                val richLine = RichLyricLine()
-                richLine.begin = (line["begin"] as? Number)?.toLong() ?: 0L
-                richLine.end = (line["end"] as? Number)?.toLong() ?: 0L
-                richLine.text = line["text"] as? String ?: ""
-                line["translation"]?.let { richLine.translation = it as String }
-                line["secondary"]?.let { richLine.secondary = it as String }
+            val lyrics = lyricsRaw.map { line ->
                 @Suppress("UNCHECKED_CAST")
                 val wordsRaw = line["words"] as? List<Map<String, Any?>> ?: emptyList()
-                richLine.words = wordsRaw.map { w ->
-                    val word = LyricWord()
-                    word.text = w["text"] as? String ?: ""
-                    word.begin = (w["begin"] as? Number)?.toLong() ?: 0L
-                    word.end = (w["end"] as? Number)?.toLong() ?: 0L
-                    word
-                }
-                richLine
+                RichLyricLine(
+                    begin = (line["begin"] as? Number)?.toLong() ?: 0L,
+                    end = (line["end"] as? Number)?.toLong() ?: 0L,
+                    text = line["text"] as? String ?: "",
+                    translation = line["translation"] as? String,
+                    words = wordsRaw.map { w ->
+                        LyricWord(
+                            text = w["text"] as? String ?: "",
+                            begin = (w["begin"] as? Number)?.toLong() ?: 0L,
+                            end = (w["end"] as? Number)?.toLong() ?: 0L
+                        )
+                    }
+                )
             }
-            return song
+            return Song(
+                id = arg["id"] as? String ?: "",
+                name = arg["name"] as? String ?: "",
+                artist = arg["artist"] as? String ?: "",
+                duration = (arg["duration"] as? Number)?.toLong() ?: 0L,
+                lyrics = lyrics
+            )
         }
     }
 

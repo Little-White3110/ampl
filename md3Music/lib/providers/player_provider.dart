@@ -913,7 +913,14 @@ class PlayerProvider extends ChangeNotifier {
         }
       }
       if (token != _lyriconFetchToken) return;
-      await LyriconProviderService.instance.onSongChanged(song, lines);
+      // 传入当前播放进度和状态，让 Lyricon 能立即触发歌词渲染
+      // （Lyricon 推荐调用顺序：setSong → setPosition → setPlaybackState）
+      await LyriconProviderService.instance.onSongChanged(
+        song,
+        lines,
+        positionMs: _position.inMilliseconds,
+        isPlaying: _isPlaying,
+      );
     } catch (_) {}
   }
 

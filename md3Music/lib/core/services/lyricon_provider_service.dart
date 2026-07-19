@@ -115,7 +115,8 @@ class LyriconProviderService {
     }
     final songMap = <String, dynamic>{
       'id': song.id,
-      'name': song.title,
+      // 用 displayName 剥离 .mp3/.flac 等后缀，避免 Lyricon 标题显示带后缀
+      'name': song.displayName,
       'artist': song.artist,
       'duration': song.duration.inMilliseconds,
       'lyrics': lines
@@ -123,7 +124,7 @@ class LyriconProviderService {
                 'begin': line.startTime,
                 'end': line.endTime,
                 'text': line.text,
-                'translation': line.translation,
+                if (line.translation != null) 'translation': line.translation,
                 'words': line.words
                     .map((w) => <String, dynamic>{
                           'text': w.text,
@@ -139,10 +140,30 @@ class LyriconProviderService {
     } catch (_) {}
   }
 
-  /// 由 PlayerProvider 在切歌时调用，未启用时跳过。
-  Future<void> onSongChanged(Song? song, List<LyricLine> lines) async {
+  /// 由 PlayerProvider 在切歌时调用。
+  ///
+  /// Lyricon 推荐调用顺序（文档 6.8）：setSong → setPosition → setPlaybackState。
+  /// 只调 setSong 不调后两个，Lyricon 中心服务无法确定当前播放进度和状态，
+  /// 会导致歌词不渲染、回退显示"作者-歌名"。
+  Future<void> onSongChanged(
+    Song? song,
+    List<LyricLine> lines, {
+    int positionMs = 0,
+    bool isPlaying = false,
+  }) async {
     if (!enabled) return;
     await setSong(song, lines);
+    try {
+      await _channel.invokeMethod('setPosition', {'positionMs': positionMs});
+      await _channel.invokeMethod(
+        'setPlaybackState',
+        {
+          'state': isPlaying ? 1 : 2, // 1=playing, 2=paused
+          'position': positionMs,
+          'speed': 1.0,
+        },
+      );
+    } catch (_) {}
   }
 
   /// 推送一段纯文本（如临时提示）。
