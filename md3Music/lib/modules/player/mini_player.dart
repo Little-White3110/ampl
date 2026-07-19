@@ -26,26 +26,13 @@ class MiniPlayer extends StatelessWidget {
 
     return GestureDetector(
       onTap: () {
+        // 使用 MaterialPageRoute 而非 PageRouteBuilder + 自定义 transitionsBuilder：
+        // 自定义 transition 会让系统无法将预测返回手势偏移映射到路由动画，
+        // 从而禁用预测返回。MaterialPageRoute 原生支持预测返回手势。
+        // 默认 Android 过渡为 fade + slight slide，由 PageTransitionsTheme 控制。
         Navigator.of(context).push(
-          PageRouteBuilder(
-            // opaque: true（默认）启用预测性返回手势：
-            // opaque: false 会让系统认为底层路由可见，禁用预测动画
-            pageBuilder: (_, _, _) => const FullPlayer(),
-            transitionsBuilder: (_, animation, _, child) {
-              return SlideTransition(
-                position:
-                    Tween<Offset>(
-                      begin: const Offset(0, 1),
-                      end: Offset.zero,
-                    ).animate(
-                      CurvedAnimation(
-                        parent: animation,
-                        curve: Curves.easeOutCubic,
-                      ),
-                    ),
-                child: child,
-              );
-            },
+          MaterialPageRoute(
+            builder: (_) => const FullPlayer(),
           ),
         );
       },

@@ -207,28 +207,34 @@ class _FullPlayerState extends State<FullPlayer>
 
     // 用 Stack 叠加全屏布局与迷你条布局，由弹簧进度驱动透明度交叉淡入淡出。
     // IgnorePointer 防止隐藏层拦截手势。
-    return Stack(
-      children: [
-        // 1. 全屏 Apple Music 风格布局
-        Opacity(
-          opacity: fullOpacity,
-          child: IgnorePointer(
-            ignoring: fullOpacity < 0.5,
-            child: _buildFullLayout(playerProvider, currentSong, colorScheme),
-          ),
-        ),
-        // 2. 迷你条布局（底部对齐，其余区域透明，让底层路由可见）
-        Opacity(
-          opacity: miniOpacity,
-          child: IgnorePointer(
-            ignoring: miniOpacity < 0.5,
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: _buildMiniBar(playerProvider, currentSong, colorScheme),
+    // 外层用 Scaffold(backgroundColor: Colors.black) 包裹：
+    // 1. 提供稳定不透明背景，避免预测返回手势时透出底层路由
+    // 2. 与 _buildFullLayout 内部的 Scaffold(backgroundColor: Colors.black) 一致
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          // 1. 全屏 Apple Music 风格布局
+          Opacity(
+            opacity: fullOpacity,
+            child: IgnorePointer(
+              ignoring: fullOpacity < 0.5,
+              child: _buildFullLayout(playerProvider, currentSong, colorScheme),
             ),
           ),
-        ),
-      ],
+          // 2. 迷你条布局（底部对齐，其余区域透明，让底层路由可见）
+          Opacity(
+            opacity: miniOpacity,
+            child: IgnorePointer(
+              ignoring: miniOpacity < 0.5,
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: _buildMiniBar(playerProvider, currentSong, colorScheme),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

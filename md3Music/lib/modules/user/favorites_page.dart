@@ -310,10 +310,6 @@ class _FavoritesPageState extends State<FavoritesPage> {
     required List<KugouPlaylistBrief> playlists,
     required int baseIndex,
   }) {
-    // 折叠时全部隐藏（displayCount = 0），展开时显示全部
-    // 用户反馈：折叠应隐藏所有歌单，而非仅隐藏超出 5 个的部分
-    final displayCount = isExpanded ? playlists.length : 0;
-
     return Column(
       children: [
         // 分组头部
@@ -365,20 +361,32 @@ class _FavoritesPageState extends State<FavoritesPage> {
         ),
         Divider(height: 1, indent: 44, color: Theme.of(context).colorScheme.outlineVariant),
 
-        // 用 AnimatedSize 实现展开/收纳动画
-        // 折叠时显示前 5 个，展开时显示全部（displayCount 已根据 isExpanded 计算）
-        AnimatedSize(
+        // 用 AnimatedSwitcher + SizeTransition 实现展开/收纳动画：
+        // AnimatedSize 在折叠时 child 立即变空 Column，动画过程无可视内容；
+        // SizeTransition 的 child 始终完整渲染所有 tiles，通过 sizeFactor
+        // 控制可见比例，折叠时 tiles 从顶部向下被裁切消失，展开时反向显现。
+        AnimatedSwitcher(
           duration: const Duration(milliseconds: 280),
-          curve: Curves.easeInOutCubic,
-          alignment: Alignment.topCenter,
-          child: Column(
-            children: List.generate(displayCount, (i) {
-              final playlist = playlists[i];
-              final idx = baseIndex + i;
-              final isSelected = _selectedIndices.contains(idx);
-              return _buildPlaylistTile(playlist, isSelected, idx, baseIndex);
-            }),
+          switchInCurve: Curves.easeInOutCubic,
+          switchOutCurve: Curves.easeInOutCubic,
+          transitionBuilder: (child, animation) => SizeTransition(
+            sizeFactor: animation,
+            axisAlignment: 1.0, // 顶部对齐，向下展开/向上收起
+            child: child,
           ),
+          child: isExpanded
+              ? Column(
+                  key: const ValueKey('expanded'),
+                  mainAxisSize: MainAxisSize.min,
+                  children: List.generate(playlists.length, (i) {
+                    final playlist = playlists[i];
+                    final idx = baseIndex + i;
+                    final isSelected = _selectedIndices.contains(idx);
+                    return _buildPlaylistTile(
+                        playlist, isSelected, idx, baseIndex);
+                  }),
+                )
+              : const SizedBox.shrink(key: ValueKey('collapsed')),
         ),
       ],
     );
