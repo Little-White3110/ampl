@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'core/layout/responsive_layout.dart';
@@ -163,37 +162,6 @@ class _MainLayoutState extends State<_MainLayout> with WidgetsBindingObserver {
     );
   }
 
-  /// 预见性返回开关关闭时，栈空按返回键弹出的退出确认框。
-  /// 用户选择「退出」时调用 SystemNavigator.pop() 退出 App。
-  ///
-  /// 用 rootNavigator: true 确保对话框 push 到根 Navigator：
-  /// _MainLayout 的 context 在根路由内，若不指定 rootNavigator，
-  /// 对话框可能被内嵌 Navigator（如 ResponsiveScaffold）拦截，导致不显示。
-  Future<void> _showExitDialog() async {
-    final navigator = Navigator.of(context, rootNavigator: true);
-    final shouldExit = await showDialog<bool>(
-      context: context,
-      useRootNavigator: true,
-      builder: (ctx) => AlertDialog(
-        title: const Text('退出应用'),
-        content: const Text('确定要退出 MD3Music 吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => navigator.pop(false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => navigator.pop(true),
-            child: const Text('退出'),
-          ),
-        ],
-      ),
-    );
-    if (shouldExit == true && mounted) {
-      SystemNavigator.pop();
-    }
-  }
-
   static const List<NavigationDestination> _destinations = [
     NavigationDestination(
       icon: Icon(Icons.explore_outlined),
@@ -280,58 +248,41 @@ class _MainLayoutState extends State<_MainLayout> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    // 读取预见性返回开关：
-    // - 开启（默认）：canPop: true 启用预测返回手势，栈空直接退出 App
-    // - 关闭：canPop: false 禁用预测动画，栈空时 onPopInvokedWithResult
-    //   被调用且 didPop 为 false，弹出退出确认框
-    //
-    // 关键：onPopInvokedWithResult 是 void 回调，_showExitDialog 是 async，
-    // 但 PopScope 在 canPop: false 时框架会同步向系统返回「已处理」，
-    // 不会立即关闭 App，dialog 有机会显示。
-    // 用 rootNavigator: true 确保对话框 push 到 root navigator（避免被
-    // ResponsiveScaffold 的内嵌 Navigator 拦截）。
-    final predictiveBackEnabled = context.watch<ThemeProvider>().predictiveBackEnabled;
-    return PopScope(
-      canPop: predictiveBackEnabled,
-      onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) {
-          _showExitDialog();
-        }
+    // 预测返回手势由 AndroidManifest 的 enableOnBackInvokedCallback 控制（编译时静态），
+    // 应用无法运行时关闭系统预测动画。栈空时直接退出 App（系统默认行为）。
+    return ResponsiveScaffold(
+      destinations: _destinations,
+      railDestinations: _railDestinations,
+      drawerDestinations: _drawerDestinations,
+      selectedIndex: _selectedIndex,
+      onDestinationSelected: (index) {
+        setState(() {
+          _selectedIndex = index;
+        });
       },
-      child: ResponsiveScaffold(
-        destinations: _destinations,
-        railDestinations: _railDestinations,
-        drawerDestinations: _drawerDestinations,
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) {
-          setState(() {
-            _selectedIndex = index;
-          });
-        },
-        body: Column(
-          children: [
-            Expanded(child: _pages[_selectedIndex]),
-            const MiniPlayer(),
-          ],
-        ),
-        compactBody: Column(
-          children: [
-            Expanded(child: _pages[_selectedIndex]),
-            const MiniPlayer(),
-          ],
-        ),
-        mediumBody: Column(
-          children: [
-            Expanded(child: _pages[_selectedIndex]),
-            const MiniPlayer(),
-          ],
-        ),
-        expandedBody: Column(
-          children: [
-            Expanded(child: _pages[_selectedIndex]),
-            const MiniPlayer(),
-          ],
-        ),
+      body: Column(
+        children: [
+          Expanded(child: _pages[_selectedIndex]),
+          const MiniPlayer(),
+        ],
+      ),
+      compactBody: Column(
+        children: [
+          Expanded(child: _pages[_selectedIndex]),
+          const MiniPlayer(),
+        ],
+      ),
+      mediumBody: Column(
+        children: [
+          Expanded(child: _pages[_selectedIndex]),
+          const MiniPlayer(),
+        ],
+      ),
+      expandedBody: Column(
+        children: [
+          Expanded(child: _pages[_selectedIndex]),
+          const MiniPlayer(),
+        ],
       ),
     );
   }

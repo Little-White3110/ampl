@@ -7,21 +7,17 @@ import '../core/theme/app_theme.dart';
 class ThemeProvider extends ChangeNotifier {
   static const String _key = 'theme_mode';
   static const String _dynamicKey = 'use_dynamic_color';
-  static const String _predictiveBackKey = 'predictive_back_enabled';
   static const String _amStylePlayerKey = 'use_am_style_player';
 
   ThemeMode _themeMode = ThemeMode.system;
   bool _useDynamicColor = false;
   Color? _systemSeedColor;
-  // 预见性返回手势开关，默认开启；关闭后改为弹出退出确认框
-  bool _predictiveBackEnabled = true;
   // Apple Music 风格播放页开关，默认关闭；开启后用 AM 风格 FullPlayer，关闭用原版 MD3
   bool _useAmStylePlayer = false;
 
   ThemeMode get themeMode => _themeMode;
   bool get useDynamicColor => _useDynamicColor;
   Color? get systemSeedColor => _systemSeedColor;
-  bool get predictiveBackEnabled => _predictiveBackEnabled;
   bool get useAmStylePlayer => _useAmStylePlayer;
 
   /// 当前生效的种子色：
@@ -35,7 +31,6 @@ class ThemeProvider extends ChangeNotifier {
   ThemeProvider() {
     _loadThemeMode();
     _loadDynamicColor();
-    _loadPredictiveBack();
     _loadAmStylePlayer();
   }
 
@@ -90,23 +85,6 @@ class ThemeProvider extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_dynamicKey, enabled);
-  }
-
-  /// 加载「预见性返回手势」开关持久化值，默认开启。
-  Future<void> _loadPredictiveBack() async {
-    final prefs = await SharedPreferences.getInstance();
-    _predictiveBackEnabled = prefs.getBool(_predictiveBackKey) ?? true;
-    notifyListeners();
-  }
-
-  /// 切换「预见性返回手势」开关。
-  /// 开启时 PopScope.canPop=true 启用预测动画；关闭时 canPop=false 弹退出确认框。
-  Future<void> setPredictiveBackEnabled(bool enabled) async {
-    if (_predictiveBackEnabled == enabled) return;
-    _predictiveBackEnabled = enabled;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_predictiveBackKey, enabled);
   }
 
   /// 加载「Apple Music 风格播放页」开关持久化值，默认关闭。

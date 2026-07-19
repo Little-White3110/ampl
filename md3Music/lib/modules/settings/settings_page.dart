@@ -33,8 +33,6 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _connectionResult;
   bool _autoReceiveVip = true;
   bool _useDynamicColor = false;
-  // 预见性返回手势开关（默认开启）
-  bool _predictiveBackEnabled = true;
   // Apple Music 风格播放页开关（默认关闭，开启后用 AM 风格 FullPlayer）
   bool _useAmStylePlayer = false;
   String _appVersion = '';
@@ -59,8 +57,6 @@ class _SettingsPageState extends State<SettingsPage> {
     final apiServerUrl = await _settingsRepository.getApiServerUrl();
     // 从 ThemeProvider 同步「使用系统主题色」开关状态
     final useDynamicColor = context.read<ThemeProvider>().useDynamicColor;
-    // 从 ThemeProvider 同步「预见性返回手势」开关状态
-    final predictiveBack = context.read<ThemeProvider>().predictiveBackEnabled;
     // 从 ThemeProvider 同步「Apple Music 风格播放页」开关状态
     final useAmStylePlayer = context.read<ThemeProvider>().useAmStylePlayer;
 
@@ -70,7 +66,6 @@ class _SettingsPageState extends State<SettingsPage> {
       _autoReceiveVip = autoReceiveVip;
       _apiServerController.text = apiServerUrl;
       _useDynamicColor = useDynamicColor;
-      _predictiveBackEnabled = predictiveBack;
       _useAmStylePlayer = useAmStylePlayer;
     });
   }
@@ -244,15 +239,6 @@ class _SettingsPageState extends State<SettingsPage> {
           onChanged: (v) {
             setState(() => _useDynamicColor = v);
             context.read<ThemeProvider>().setUseDynamicColor(v);
-          },
-        ),
-        SwitchListTile(
-          title: const Text('预见性返回手势'),
-          subtitle: const Text('Android 14+ 边缘滑动预测动画，关闭后改为退出确认框'),
-          value: _predictiveBackEnabled,
-          onChanged: (v) {
-            setState(() => _predictiveBackEnabled = v);
-            context.read<ThemeProvider>().setPredictiveBackEnabled(v);
           },
         ),
         SwitchListTile(
