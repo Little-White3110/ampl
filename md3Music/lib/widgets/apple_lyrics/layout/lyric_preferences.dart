@@ -27,7 +27,9 @@ class LyricPreferences extends ChangeNotifier {
   static const double defaultFontSize = 15;
 
   /// 行间距系数最小值
-  static const double minLineSpacing = 1.0;
+  ///
+  /// 下限 0.5 允许把行间距压到比默认行高更紧（0.5×），用于紧凑排版偏好。
+  static const double minLineSpacing = 0.5;
 
   /// 行间距系数最大值
   static const double maxLineSpacing = 2.0;

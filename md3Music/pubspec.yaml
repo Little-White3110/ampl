@@ -29,6 +29,7 @@ dependencies:
   url_launcher: ^6.3.0
   package_info_plus: ^8.2.0
   ffi: ^2.1.0
+  palette_generator: ^0.3.3+7
 
 dev_dependencies:
   flutter_test:

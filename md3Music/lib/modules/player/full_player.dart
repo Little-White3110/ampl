@@ -475,6 +475,7 @@ class _FullPlayerState extends State<FullPlayer>
                 CommentsView(
                   songHash: currentSong.id,
                   albumAudioId: currentSong.albumAudioId,
+                  artworkUri: currentSong.artworkUri,
                 ),
               ],
             ),
@@ -592,6 +593,7 @@ class _FullPlayerState extends State<FullPlayer>
                       CommentsView(
                         songHash: currentSong.id,
                         albumAudioId: currentSong.albumAudioId,
+                        artworkUri: currentSong.artworkUri,
                       ),
                     ],
                   ),
@@ -651,6 +653,7 @@ class _FullPlayerState extends State<FullPlayer>
                       CommentsView(
                         songHash: currentSong.id,
                         albumAudioId: currentSong.albumAudioId,
+                        artworkUri: currentSong.artworkUri,
                       ),
                     ],
                   ),
