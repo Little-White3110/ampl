@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'core/layout/responsive_layout.dart';
@@ -70,6 +71,8 @@ class _AppView extends StatelessWidget {
         '/search': (_) => const SearchPage(),
         '/library': (_) => const LibraryPage(),
         '/settings': (_) => const SettingsPage(),
+        // 发现页右上角头像点击跳转入口（push 独立路由，与底部 tab 中的实例并存无冲突）
+        '/user': (_) => const UserCenterPage(),
         '/player': (_) => const FullPlayer(),
         '/personal_fm': (_) => const PersonalFmPage(),
       },
@@ -160,6 +163,31 @@ class _MainLayoutState extends State<_MainLayout> with WidgetsBindingObserver {
     );
   }
 
+  /// 预见性返回开关关闭时，栈空按返回键弹出的退出确认框。
+  /// 用户选择「退出」时调用 SystemNavigator.pop() 退出 App。
+  Future<void> _showExitDialog() async {
+    final shouldExit = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('退出应用'),
+        content: const Text('确定要退出 MD3Music 吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('退出'),
+          ),
+        ],
+      ),
+    );
+    if (shouldExit == true && mounted) {
+      SystemNavigator.pop();
+    }
+  }
+
   static const List<NavigationDestination> _destinations = [
     NavigationDestination(
       icon: Icon(Icons.explore_outlined),
@@ -246,11 +274,18 @@ class _MainLayoutState extends State<_MainLayout> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    // 启用预测性返回（Predictive Back）：
-    // canPop: true 让系统启动边缘滑动预测动画，子路由自动 pop；
-    // 栈空时系统直接执行 activity back 退出 App（无确认框）。
+    // 读取预见性返回开关：
+    // - 开启（默认）：canPop: true 启用预测返回手势，栈空直接退出 App
+    // - 关闭：canPop: false 禁用预测动画，栈空时 onPopInvokedWithResult
+    //   被调用且 didPop 为 false，弹出退出确认框
+    final predictiveBackEnabled = context.watch<ThemeProvider>().predictiveBackEnabled;
     return PopScope(
-      canPop: true,
+      canPop: predictiveBackEnabled,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) {
+          _showExitDialog();
+        }
+      },
       child: ResponsiveScaffold(
         destinations: _destinations,
         railDestinations: _railDestinations,

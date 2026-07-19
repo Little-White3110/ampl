@@ -310,7 +310,9 @@ class _FavoritesPageState extends State<FavoritesPage> {
     required List<KugouPlaylistBrief> playlists,
     required int baseIndex,
   }) {
-    final displayCount = isExpanded ? playlists.length : (count > 5 ? 5 : count);
+    // 折叠时全部隐藏（displayCount = 0），展开时显示全部
+    // 用户反馈：折叠应隐藏所有歌单，而非仅隐藏超出 5 个的部分
+    final displayCount = isExpanded ? playlists.length : 0;
 
     return Column(
       children: [

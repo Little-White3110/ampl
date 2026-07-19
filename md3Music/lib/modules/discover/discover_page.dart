@@ -152,7 +152,11 @@ class _DiscoverPageState extends State<DiscoverPage> {
           Consumer<KugouProvider>(
             builder: (context, kugou, _) => Padding(
               padding: const EdgeInsets.only(right: 8),
-              child: _buildAvatar(kugou, colorScheme),
+              // 头像可点击：跳转到「我的」页面（push 独立路由）
+              child: GestureDetector(
+                onTap: () => Navigator.of(context).pushNamed('/user'),
+                child: _buildAvatar(kugou, colorScheme),
+              ),
             ),
           ),
         ],

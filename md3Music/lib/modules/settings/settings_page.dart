@@ -33,6 +33,8 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _connectionResult;
   bool _autoReceiveVip = true;
   bool _useDynamicColor = false;
+  // 预见性返回手势开关（默认开启）
+  bool _predictiveBackEnabled = true;
   String _appVersion = '';
 
   @override
@@ -55,6 +57,8 @@ class _SettingsPageState extends State<SettingsPage> {
     final apiServerUrl = await _settingsRepository.getApiServerUrl();
     // 从 ThemeProvider 同步「使用系统主题色」开关状态
     final useDynamicColor = context.read<ThemeProvider>().useDynamicColor;
+    // 从 ThemeProvider 同步「预见性返回手势」开关状态
+    final predictiveBack = context.read<ThemeProvider>().predictiveBackEnabled;
 
     setState(() {
       _themeMode = themeMode;
@@ -62,6 +66,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _autoReceiveVip = autoReceiveVip;
       _apiServerController.text = apiServerUrl;
       _useDynamicColor = useDynamicColor;
+      _predictiveBackEnabled = predictiveBack;
     });
   }
 
@@ -234,6 +239,15 @@ class _SettingsPageState extends State<SettingsPage> {
           onChanged: (v) {
             setState(() => _useDynamicColor = v);
             context.read<ThemeProvider>().setUseDynamicColor(v);
+          },
+        ),
+        SwitchListTile(
+          title: const Text('预见性返回手势'),
+          subtitle: const Text('Android 14+ 边缘滑动预测动画，关闭后改为退出确认框'),
+          value: _predictiveBackEnabled,
+          onChanged: (v) {
+            setState(() => _predictiveBackEnabled = v);
+            context.read<ThemeProvider>().setPredictiveBackEnabled(v);
           },
         ),
         const SizedBox(height: 8),

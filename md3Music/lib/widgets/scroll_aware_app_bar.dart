@@ -97,12 +97,10 @@ class _ScrollAwareAppBarState extends State<ScrollAwareAppBar> {
       surfaceTintColor: Colors.transparent, // 关闭 surfaceTint 着色
       foregroundColor: colorScheme.onSurface,
       leading: widget.leading,
-      title: Opacity(
-        opacity: t,
-        child: Text(
-          widget.title,
-          style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
-        ),
+      // 标题始终显示（用户反馈：初始就应可见，不依赖滚动）
+      title: Text(
+        widget.title,
+        style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
       ),
       actions: widget.actions,
       centerTitle: false,

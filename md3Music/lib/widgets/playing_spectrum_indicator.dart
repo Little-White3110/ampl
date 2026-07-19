@@ -16,10 +16,14 @@ class PlayingSpectrumIndicator extends StatefulWidget {
   /// 整体尺寸（正方形），默认 14×14
   final double size;
 
+  /// 是否正在播放：true 时 ticker 运行动画，false 时 ticker 停止保留最后一帧
+  final bool isPlaying;
+
   const PlayingSpectrumIndicator({
     super.key,
     required this.color,
     this.size = 14,
+    this.isPlaying = true,
   });
 
   @override
@@ -37,7 +41,26 @@ class _PlayingSpectrumIndicatorState extends State<PlayingSpectrumIndicator>
   void initState() {
     super.initState();
     _ticker = createTicker(_onTick);
-    _ticker.start();
+    // 根据 isPlaying 决定是否启动 ticker
+    if (widget.isPlaying) {
+      _ticker.start();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant PlayingSpectrumIndicator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // isPlaying 状态变化时启停 ticker：
+    // - false → true：重置 _lastElapsed 避免 dt 跳跃，然后 start
+    // - true → false：stop 保留最后一帧（setState 不再调用，画面冻结）
+    if (widget.isPlaying != oldWidget.isPlaying) {
+      if (widget.isPlaying) {
+        _lastElapsed = Duration.zero;
+        _ticker.start();
+      } else {
+        _ticker.stop();
+      }
+    }
   }
 
   void _onTick(Duration elapsed) {

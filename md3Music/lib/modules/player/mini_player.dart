@@ -28,7 +28,8 @@ class MiniPlayer extends StatelessWidget {
       onTap: () {
         Navigator.of(context).push(
           PageRouteBuilder(
-            opaque: false,
+            // opaque: true（默认）启用预测性返回手势：
+            // opaque: false 会让系统认为底层路由可见，禁用预测动画
             pageBuilder: (_, _, _) => const FullPlayer(),
             transitionsBuilder: (_, animation, _, child) {
               return SlideTransition(

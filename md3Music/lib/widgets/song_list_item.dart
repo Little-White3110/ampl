@@ -225,19 +225,17 @@ class SongListItem extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                if (isCurrentSong && playerProvider.isPlaying)
+                if (isCurrentSong)
                   Padding(
                     padding: const EdgeInsets.only(right: 2),
                     // 频谱动画标识：3 根粒度柱 sin 波动
+                    // 暂停时 isPlaying=false → ticker 停止，保留最后一帧
+                    // 继续播放时 isPlaying=true → ticker 恢复，动画继续
                     child: PlayingSpectrumIndicator(
                       color: colorScheme.primary,
                       size: 14,
+                      isPlaying: playerProvider.isPlaying,
                     ),
-                  )
-                else if (isCurrentSong)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 2),
-                    child: Icon(Icons.equalizer, size: 13, color: colorScheme.primary),
                   ),
                 if (showDuration)
                   Padding(
