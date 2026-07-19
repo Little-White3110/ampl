@@ -178,7 +178,9 @@ class LyriconProviderService {
       await _channel.invokeMethod(
         'setPlaybackState',
         {
-          'state': isPlaying ? 1 : 2, // 1=playing, 2=paused
+          // 必须用 PlaybackStateCompat 常量：STATE_PLAYING=3, STATE_PAUSED=2
+          // Kotlin 端判断 state==3 推导 isPlaying，传 1 会被当成 STATE_STOPPED→isPlaying=false
+          'state': isPlaying ? 3 : 2,
           'position': positionMs,
           'speed': 1.0,
         },
@@ -201,7 +203,10 @@ class LyriconProviderService {
     } catch (_) {}
   }
 
-  /// 推送播放状态：state（0=idle, 1=playing, 2=paused）、position（ms）、speed。
+  /// 推送播放状态。
+  ///
+  /// state 必须用 PlaybackStateCompat 常量：STATE_PLAYING=3, STATE_PAUSED=2。
+  /// Kotlin 端判断 state==3 推导 isPlaying，传其他值会被当成 paused。
   Future<void> setPlaybackState({
     required int state,
     required int position,
