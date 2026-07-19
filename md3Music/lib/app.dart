@@ -247,18 +247,10 @@ class _MainLayoutState extends State<_MainLayout> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     // 启用预测性返回（Predictive Back）：
-    // - canPop: true 让系统启动边缘滑动预测动画，子路由自动 pop
-    // - 栈空时 onPopInvokedWithResult 被调用且 didPop 为 true，
-    //   此时弹出退出确认对话框，让用户选择是否真的退出
+    // canPop: true 让系统启动边缘滑动预测动画，子路由自动 pop；
+    // 栈空时系统直接执行 activity back 退出 App（无确认框）。
     return PopScope(
       canPop: true,
-      onPopInvokedWithResult: (didPop, result) {
-        // didPop 为 true 表示路由已 pop（栈空时系统会执行 activity back）
-        // 这里在 activity back 完成前拦截，弹退出确认框
-        if (didPop) return;
-        // canPop: true 时 didPop 永远为 true，不会进入此分支
-        // 保留兜底：栈非空时不弹退出框
-      },
       child: ResponsiveScaffold(
         destinations: _destinations,
         railDestinations: _railDestinations,

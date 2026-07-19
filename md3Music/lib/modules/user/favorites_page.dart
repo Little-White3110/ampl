@@ -285,7 +285,6 @@ class _FavoritesPageState extends State<FavoritesPage> {
               onToggle: (v) => setState(() => _createdExpanded = v),
               playlists: created,
               baseIndex: 0,
-              showAdd: false, // 删除分组加号（AppBar 右上角保留为唯一入口）
             ),
 
           // 我收藏的歌单
@@ -297,7 +296,6 @@ class _FavoritesPageState extends State<FavoritesPage> {
               onToggle: (v) => setState(() => _collectedExpanded = v),
               playlists: collected,
               baseIndex: created.length,
-              showAdd: false,
             ),
         ],
       ),
@@ -311,7 +309,6 @@ class _FavoritesPageState extends State<FavoritesPage> {
     required ValueChanged<bool> onToggle,
     required List<KugouPlaylistBrief> playlists,
     required int baseIndex,
-    required bool showAdd,
   }) {
     final displayCount = isExpanded ? playlists.length : (count > 5 ? 5 : count);
 

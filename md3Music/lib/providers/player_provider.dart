@@ -792,7 +792,8 @@ class PlayerProvider extends ChangeNotifier {
       }
     } catch (_) {}
     MediaNotificationService.updateNotification(
-      title: song.title,
+      // 使用 displayName 剥离 .mp3 等扩展名，与 _createAudioSource 行为保持一致
+      title: song.displayName,
       artist: song.artist,
       artUrl: song.artworkUri,
       isPlaying: _isPlaying,
