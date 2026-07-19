@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import '../../core/services/desktop_lyric_service.dart';
 import '../../core/services/media_notification_service.dart';
 import '../../providers/player_provider.dart';
-import 'full_player.dart';
+import 'full_player_route.dart';
 
 class MiniPlayer extends StatelessWidget {
   const MiniPlayer({super.key});
@@ -26,15 +26,12 @@ class MiniPlayer extends StatelessWidget {
 
     return GestureDetector(
       onTap: () {
-        // 使用 MaterialPageRoute 而非 PageRouteBuilder + 自定义 transitionsBuilder：
-        // 自定义 transition 会让系统无法将预测返回手势偏移映射到路由动画，
-        // 从而禁用预测返回。MaterialPageRoute 原生支持预测返回手势。
-        // 默认 Android 过渡为 fade + slight slide，由 PageTransitionsTheme 控制。
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => const FullPlayer(),
-          ),
-        );
+        // 使用 BottomSlideMaterialPageRoute（MaterialPageRoute 子类）：
+        // - 继承 MaterialPageRoute 保留与系统预测返回手势的对接
+        // - 重写 buildTransitions 用 animation 驱动 SlideTransition
+        //   push 时从底部滑入，预测返回时系统驱动 animation 反向播放，
+        //   页面自然跟随手势向下平移（而非默认的整页缩小）
+        Navigator.of(context).push(fullPlayerRoute());
       },
       child: Container(
         // Container 在外提供整体背景色与顶部 border：
