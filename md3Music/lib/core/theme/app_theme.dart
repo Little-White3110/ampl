@@ -17,8 +17,9 @@ class AppTheme {
     Color(0xFF984061), // 粉
   ];
 
-  /// 默认种子色 = [presetSeedColors] 的第一项（紫色），保持向后兼容。
-  static const Color defaultSeedColor = presetSeedColors[0];
+  /// 默认种子色（紫色），用于未启用系统主题色且未手动选择时的兜底。
+  /// 必须独立定义为 const，不能引用 [presetSeedColors] 的索引（非常量表达式）。
+  static const Color defaultSeedColor = Color(0xFF6750A4);
 
   // CJK 字体回退链 - 按平台优先级排序:
   // 1) Web 浏览器(Windows + Edge) 优先用系统自带的 "Microsoft YaHei" (无需下载)
