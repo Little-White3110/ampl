@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/services/lyricon_provider_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/repositories/settings_repository.dart';
 import '../../providers/kugou_provider.dart';
@@ -38,18 +39,63 @@ class _SettingsPageState extends State<SettingsPage> {
   // Apple Music 风格播放页开关（默认关闭，开启后用 AM 风格 FullPlayer）
   bool _useAmStylePlayer = false;
   String _appVersion = '';
+  // Lyricon 词幕推送相关状态
+  bool _lyriconEnabled = false;
+  bool _lyriconDisplayTranslation = true;
+  bool _lyriconDisplayRoma = false;
 
   @override
   void initState() {
     super.initState();
     _loadSettings();
     _loadVersion();
+    _loadLyriconSettings();
+    LyriconProviderService.instance.addListener(_onLyriconStateChanged);
   }
 
   @override
   void dispose() {
+    LyriconProviderService.instance.removeListener(_onLyriconStateChanged);
     _apiServerController.dispose();
     super.dispose();
+  }
+
+  /// Lyricon 服务状态变化回调：触发 UI 刷新
+  void _onLyriconStateChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  /// 从 SettingsRepository 加载 Lyricon 三个偏好
+  Future<void> _loadLyriconSettings() async {
+    final enabled = await _settingsRepository.getLyriconEnabled();
+    final displayTranslation =
+        await _settingsRepository.getLyriconDisplayTranslation();
+    final displayRoma = await _settingsRepository.getLyriconDisplayRoma();
+    if (mounted) {
+      setState(() {
+        _lyriconEnabled = enabled;
+        _lyriconDisplayTranslation = displayTranslation;
+        _lyriconDisplayRoma = displayRoma;
+      });
+    }
+  }
+
+  /// Lyricon 连接状态 → 中文文案
+  String _getLyriconStateText() {
+    switch (LyriconProviderService.instance.state) {
+      case LyriconConnectionState.disabled:
+        return '未启用';
+      case LyriconConnectionState.connecting:
+        return '连接中...';
+      case LyriconConnectionState.connected:
+        return '已连接';
+      case LyriconConnectionState.disconnected:
+        return '已断开';
+      case LyriconConnectionState.timeout:
+        return '连接超时，请检查 Lyricon / LSPosed 配置';
+    }
   }
 
   Future<void> _loadSettings() async {
@@ -182,6 +228,60 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             );
           },
+        ),
+        // Lyricon 词幕推送主开关
+        SwitchListTile(
+          title: const Text('Lyricon 词幕推送'),
+          subtitle: const Text('向 Lyricon 提供方实时推送歌词'),
+          value: _lyriconEnabled,
+          onChanged: (value) {
+            setState(() {
+              _lyriconEnabled = value;
+            });
+            LyriconProviderService.instance.setEnabled(value);
+            _settingsRepository.setLyriconEnabled(value);
+          },
+        ),
+        // 主开关下方显示当前连接状态
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              _getLyriconStateText(),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ),
+        // 次级开关：翻译歌词（主开关关闭时禁用）
+        SwitchListTile(
+          title: const Text('翻译歌词'),
+          value: _lyriconDisplayTranslation,
+          onChanged: _lyriconEnabled
+              ? (value) {
+                  setState(() {
+                    _lyriconDisplayTranslation = value;
+                  });
+                  LyriconProviderService.instance.setDisplayTranslation(value);
+                  _settingsRepository.setLyriconDisplayTranslation(value);
+                }
+              : null,
+        ),
+        // 次级开关：罗马音（主开关关闭时禁用）
+        SwitchListTile(
+          title: const Text('罗马音'),
+          value: _lyriconDisplayRoma,
+          onChanged: _lyriconEnabled
+              ? (value) {
+                  setState(() {
+                    _lyriconDisplayRoma = value;
+                  });
+                  LyriconProviderService.instance.setDisplayRoma(value);
+                  _settingsRepository.setLyriconDisplayRoma(value);
+                }
+              : null,
         ),
       ],
     );

@@ -23,6 +23,12 @@ import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.github.proify.lyricon.provider.ConnectionListener
+import io.github.proify.lyricon.provider.LyriconFactory
+import io.github.proify.lyricon.provider.LyriconProvider
+import io.github.proify.lyricon.lyric.model.LyricWord
+import io.github.proify.lyricon.lyric.model.RichLyricLine
+import io.github.proify.lyricon.lyric.model.Song
 
 class AudioPlaybackService : Service() {
     companion object {
@@ -68,6 +74,56 @@ class AudioPlaybackService : Service() {
             }
             wakeLock = null
         }
+
+        // Lyricon Provider 单例引用（companion 持有，方便 MainActivity channel 直接访问）
+        @Volatile
+        private var lyriconProvider: LyriconProvider? = null
+        private var lyriconChannel: MethodChannel? = null
+
+        fun setLyriconChannel(channel: MethodChannel?) {
+            lyriconChannel = channel
+        }
+
+        fun getLyriconProvider(): LyriconProvider? = lyriconProvider
+
+        /** 由 MainActivity 的 lyricon channel handler 调用，把 Dart 端 Map 转成 SDK 的 Song */
+        fun buildLyriconSong(arg: Map<String, Any?>): Song {
+            @Suppress("UNCHECKED_CAST")
+            val lyricsRaw = arg["lyrics"] as? List<Map<String, Any?>> ?: emptyList()
+            val lyrics = lyricsRaw.map { line ->
+                @Suppress("UNCHECKED_CAST")
+                val wordsRaw = line["words"] as? List<Map<String, Any?>> ?: emptyList()
+                RichLyricLine(
+                    begin = (line["begin"] as? Number)?.toLong() ?: 0L,
+                    end = (line["end"] as? Number)?.toLong() ?: 0L,
+                    text = line["text"] as? String ?: "",
+                    translation = line["translation"] as? String,
+                    words = wordsRaw.map { w ->
+                        LyricWord(
+                            text = w["text"] as? String ?: "",
+                            begin = (w["begin"] as? Number)?.toLong() ?: 0L,
+                            end = (w["end"] as? Number)?.toLong() ?: 0L
+                        )
+                    }
+                )
+            }
+            val song = Song(
+                id = arg["id"] as? String ?: "",
+                name = arg["name"] as? String ?: "",
+                artist = arg["artist"] as? String ?: "",
+                duration = (arg["duration"] as? Number)?.toLong() ?: 0L,
+                lyrics = lyrics
+            )
+            // 调试日志：让用户用 adb logcat -s LyriconDebug 验证实际数据
+            // 关注点：lyrics.size 是否为 0；首行 begin/end 是否合法（begin < end）
+            val first = lyrics.firstOrNull()
+            android.util.Log.d("LyriconDebug",
+                "buildLyriconSong: name='${song.name}', artist='${song.artist}', " +
+                "duration=${song.duration}, lyrics.size=${lyrics.size}, " +
+                "first=${first?.let { "begin=${it.begin}, end=${it.end}, text='${it.text}', words=${it.words?.size ?: 0}" }}"
+            )
+            return song
+        }
     }
 
     private var mediaSession: MediaSessionCompat? = null
@@ -84,6 +140,32 @@ class AudioPlaybackService : Service() {
         initMediaSession()
         registerReceiver()
         acquireWakeLock(this)
+
+        // 初始化 Lyricon Provider（用 try-catch 包裹，防止 SDK 在低版本 Android 抛异常）
+        lyriconProvider = try {
+            LyriconFactory.createProvider(this).apply {
+                autoSync = true
+                try {
+                    // SDK 的 ConnectionListener 是 interface，必须用 object 表达式实现
+                    service.addConnectionListener(object : ConnectionListener {
+                        override fun onConnected(provider: LyriconProvider) {
+                            lyriconChannel?.invokeMethod("onConnectionStateChanged", "connected")
+                        }
+                        override fun onReconnected(provider: LyriconProvider) {
+                            lyriconChannel?.invokeMethod("onConnectionStateChanged", "reconnected")
+                        }
+                        override fun onDisconnected(provider: LyriconProvider) {
+                            lyriconChannel?.invokeMethod("onConnectionStateChanged", "disconnected")
+                        }
+                        override fun onConnectTimeout(provider: LyriconProvider) {
+                            lyriconChannel?.invokeMethod("onConnectionStateChanged", "timeout")
+                        }
+                    })
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -355,6 +437,11 @@ class AudioPlaybackService : Service() {
                 .build()
         )
 
+        // 同步播放状态到 Lyricon（SDK 的 setPlaybackState 接受 Boolean 重载）
+        try {
+            lyriconProvider?.player?.setPlaybackState(isPlaying)
+        } catch (_: Exception) {}
+
         mediaSession?.setMetadata(
             MediaMetadataCompat.Builder()
                 .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
@@ -382,6 +469,14 @@ class AudioPlaybackService : Service() {
             } catch (_: Exception) {}
         }
         mediaSession?.release()
+        // 释放 Lyricon Provider
+        try {
+            lyriconProvider?.unregister()
+        } catch (_: Exception) {}
+        try {
+            lyriconProvider?.destroy()
+        } catch (_: Exception) {}
+        lyriconProvider = null
         releaseWakeLock()
         super.onDestroy()
     }
