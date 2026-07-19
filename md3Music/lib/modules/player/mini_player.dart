@@ -48,13 +48,18 @@ class MiniPlayer extends StatelessWidget {
           ),
         );
       },
-      child: Container(
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerLow,
-          border: Border(
-            top: BorderSide(color: colorScheme.outlineVariant, width: 0.5),
+      child: SafeArea(
+        // 包裹底部 SafeArea：吸收系统手势条/Home Indicator 高度，
+        // 避免与全面屏手势冲突
+        top: false,
+        bottom: true,
+        child: Container(
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerLow,
+            border: Border(
+              top: BorderSide(color: colorScheme.outlineVariant, width: 0.5),
+            ),
           ),
-        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -111,7 +116,7 @@ class MiniPlayer extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          currentSong.title,
+                          currentSong.displayName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.bodyMedium,
@@ -181,7 +186,8 @@ class MiniPlayer extends StatelessWidget {
             ),
           ],
         ),
-      ),
+      ), // Container
+      ), // SafeArea
     );
   }
 }

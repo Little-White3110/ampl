@@ -34,7 +34,7 @@ class SongListItem extends StatelessWidget {
           children: [
             ListTile(
               leading: const Icon(Icons.music_note),
-              title: Text(song.title, style: const TextStyle(fontSize: 14)),
+              title: Text(song.displayName, style: const TextStyle(fontSize: 14)),
               subtitle: Text(song.artist, style: const TextStyle(fontSize: 12)),
             ),
             const Divider(height: 1),
@@ -93,7 +93,7 @@ class SongListItem extends StatelessWidget {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('下载: ${song.title}'),
+        title: Text('下载: ${song.displayName}'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -194,7 +194,7 @@ class SongListItem extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    song.title,
+                    song.displayName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(

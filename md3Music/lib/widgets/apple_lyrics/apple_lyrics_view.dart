@@ -773,7 +773,10 @@ class _LyricsPainter extends CustomPainter {
       // 点半径与间距跟随 fontSize 缩放（AMLL 风格：直径约 6-8px @ fontSize=24）
       final double dotRadius = fontSize * 0.18;
       final double dotSpacing = fontSize * 0.9;
-      interludeDots.paintAtLineY(canvas, startX, centerY,
+      // 间奏点单独右移：startX * 1.5（比歌词左对齐右移 0.5em）
+      // 让点整体居中偏右，视觉更平衡
+      final double dotsStartX = fontSize * 1.5;
+      interludeDots.paintAtLineY(canvas, dotsStartX, centerY,
           dotRadius: dotRadius, spacing: dotSpacing);
     }
   }

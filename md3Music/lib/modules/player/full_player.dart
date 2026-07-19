@@ -391,7 +391,7 @@ class _FullPlayerState extends State<FullPlayer>
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          currentSong.title,
+                          currentSong.displayName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.bodyMedium,
@@ -859,7 +859,7 @@ class _FullPlayerState extends State<FullPlayer>
             ),
           SizedBox(height: textSpacing),
           Text(
-            currentSong.title,
+            currentSong.displayName,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: (isExpanded
@@ -896,7 +896,7 @@ class _FullPlayerState extends State<FullPlayer>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
-              currentSong.title,
+              currentSong.displayName,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context)
@@ -1592,7 +1592,7 @@ class _FullPlayerState extends State<FullPlayer>
                                   )
                                 : Text('${index + 1}'),
                             title: Text(
-                              song.title,
+                              song.displayName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
