@@ -189,8 +189,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildAppearanceSection(ColorScheme colorScheme) {
     final themeProvider = context.read<ThemeProvider>();
-    // 仅 ThemeMode.dark 时启用 OLED 开关；light/system 时禁用避免用户困惑
-    final isDark = _themeMode == ThemeMode.dark;
+    // 仅 ThemeMode.light 时禁用 OLED 开关；dark 与 system 均可勾选。
+    // system 模式下勾选后，等系统切到深色时 darkTheme 自动应用纯黑（MaterialApp 机制）。
+    final canToggleOled = _themeMode != ThemeMode.light;
     return Column(
       children: [
         Padding(
@@ -237,25 +238,29 @@ class _SettingsPageState extends State<SettingsPage> {
             },
           ),
         ),
-        // 主题色入口：点击弹出 8 色预设面板
-        ListTile(
-          leading: const Icon(Icons.palette),
-          title: const Text('主题色'),
-          subtitle: Text(
-            themeProvider.useDynamicColor
-                ? '跟随系统壁纸取色'
-                : '手动选择种子色',
-          ),
-          trailing: Container(
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              color: themeProvider.effectiveSeedColor,
-              shape: BoxShape.circle,
-              border: Border.all(color: colorScheme.outline, width: 1.5),
+        // 主题色入口：点击弹出 8 色预设面板。
+        // 系统色开启时用 IgnorePointer 禁用点击（不灰显，色块仍显示当前 effectiveSeedColor）。
+        IgnorePointer(
+          ignoring: themeProvider.useDynamicColor,
+          child: ListTile(
+            leading: const Icon(Icons.palette),
+            title: const Text('主题色'),
+            subtitle: Text(
+              themeProvider.useDynamicColor
+                  ? '跟随系统壁纸取色'
+                  : '手动选择种子色',
             ),
+            trailing: Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                color: themeProvider.effectiveSeedColor,
+                shape: BoxShape.circle,
+                border: Border.all(color: colorScheme.outline, width: 1.5),
+              ),
+            ),
+            onTap: () => _showSeedColorPicker(themeProvider),
           ),
-          onTap: () => _showSeedColorPicker(themeProvider),
         ),
         SwitchListTile(
           title: const Text('使用系统主题色'),
@@ -266,12 +271,13 @@ class _SettingsPageState extends State<SettingsPage> {
             context.read<ThemeProvider>().setUseDynamicColor(v);
           },
         ),
-        // OLED 纯黑开关：仅在 ThemeMode.dark 时可切换
+        // OLED 纯黑开关：light 模式禁用；dark 与 system 可勾选。
+        // system 模式下勾选后，系统切深色时自动生效，切浅色时不影响 lightTheme。
         SwitchListTile(
           title: const Text('OLED 纯黑深色'),
           subtitle: const Text('将深色背景改为纯黑（仅深色模式生效，节省 OLED 电量）'),
           value: themeProvider.useOledBlack,
-          onChanged: isDark
+          onChanged: canToggleOled
               ? (v) => themeProvider.setUseOledBlack(v)
               : null,
         ),
