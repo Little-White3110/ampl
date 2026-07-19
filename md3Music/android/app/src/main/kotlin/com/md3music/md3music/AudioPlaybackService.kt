@@ -23,11 +23,12 @@ import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.github.proify.lyricon.provider.ConnectionListener
 import io.github.proify.lyricon.provider.LyriconFactory
 import io.github.proify.lyricon.provider.LyriconProvider
-import io.github.proify.lyricon.provider.LyricWord
-import io.github.proify.lyricon.provider.RichLyricLine
-import io.github.proify.lyricon.provider.Song
+import io.github.proify.lyricon.lyric.model.LyricWord
+import io.github.proify.lyricon.lyric.model.RichLyricLine
+import io.github.proify.lyricon.lyric.model.Song
 
 class AudioPlaybackService : Service() {
     companion object {
@@ -87,42 +88,33 @@ class AudioPlaybackService : Service() {
 
         /** 由 MainActivity 的 lyricon channel handler 调用，把 Dart 端 Map 转成 SDK 的 Song */
         fun buildLyriconSong(arg: Map<String, Any?>): Song {
-            val id = arg["id"] as? String ?: ""
-            val name = arg["name"] as? String ?: ""
-            val artist = arg["artist"] as? String ?: ""
-            val duration = (arg["duration"] as? Number)?.toLong() ?: 0L
+            // 使用无参构造 + setter，避免 SDK 构造函数参数顺序与命名参数不匹配
+            val song = Song()
+            song.id = arg["id"] as? String ?: ""
+            song.name = arg["name"] as? String ?: ""
+            song.artist = arg["artist"] as? String ?: ""
+            song.duration = (arg["duration"] as? Number)?.toLong() ?: 0L
             @Suppress("UNCHECKED_CAST")
             val lyricsRaw = arg["lyrics"] as? List<Map<String, Any?>> ?: emptyList()
-            val lyrics = lyricsRaw.map { line ->
-                val begin = (line["begin"] as? Number)?.toLong() ?: 0L
-                val end = (line["end"] as? Number)?.toLong() ?: 0L
-                val text = line["text"] as? String ?: ""
-                val translation = line["translation"] as? String
-                val secondary = line["secondary"] as? String
+            song.lyrics = lyricsRaw.map { line ->
+                val richLine = RichLyricLine()
+                richLine.begin = (line["begin"] as? Number)?.toLong() ?: 0L
+                richLine.end = (line["end"] as? Number)?.toLong() ?: 0L
+                richLine.text = line["text"] as? String ?: ""
+                line["translation"]?.let { richLine.translation = it as String }
+                line["secondary"]?.let { richLine.secondary = it as String }
                 @Suppress("UNCHECKED_CAST")
                 val wordsRaw = line["words"] as? List<Map<String, Any?>> ?: emptyList()
-                val words = wordsRaw.map { w ->
-                    val wText = w["text"] as? String ?: ""
-                    val wBegin = (w["begin"] as? Number)?.toLong() ?: 0L
-                    val wEnd = (w["end"] as? Number)?.toLong() ?: 0L
-                    LyricWord(text = wText, begin = wBegin, end = wEnd)
+                richLine.words = wordsRaw.map { w ->
+                    val word = LyricWord()
+                    word.text = w["text"] as? String ?: ""
+                    word.begin = (w["begin"] as? Number)?.toLong() ?: 0L
+                    word.end = (w["end"] as? Number)?.toLong() ?: 0L
+                    word
                 }
-                RichLyricLine(
-                    begin = begin,
-                    end = end,
-                    text = text,
-                    words = words,
-                    translation = translation,
-                    secondary = secondary
-                )
+                richLine
             }
-            return Song(
-                id = id,
-                name = name,
-                artist = artist,
-                duration = duration,
-                lyrics = lyrics
-            )
+            return song
         }
     }
 
@@ -146,20 +138,21 @@ class AudioPlaybackService : Service() {
             LyriconFactory.createProvider(this).apply {
                 autoSync = true
                 try {
-                    service.addConnectionListener {
-                        onConnected { _ ->
+                    // SDK 的 ConnectionListener 是 interface，必须用 object 表达式实现
+                    service.addConnectionListener(object : ConnectionListener {
+                        override fun onConnected(provider: LyriconProvider) {
                             lyriconChannel?.invokeMethod("onConnectionStateChanged", "connected")
                         }
-                        onReconnected { _ ->
+                        override fun onReconnected(provider: LyriconProvider) {
                             lyriconChannel?.invokeMethod("onConnectionStateChanged", "reconnected")
                         }
-                        onDisconnected { _ ->
+                        override fun onDisconnected(provider: LyriconProvider) {
                             lyriconChannel?.invokeMethod("onConnectionStateChanged", "disconnected")
                         }
-                        onConnectTimeout { _ ->
+                        override fun onConnectTimeout(provider: LyriconProvider) {
                             lyriconChannel?.invokeMethod("onConnectionStateChanged", "timeout")
                         }
-                    }
+                    })
                 } catch (_: Exception) {}
             }
         } catch (_: Exception) {
@@ -436,15 +429,9 @@ class AudioPlaybackService : Service() {
                 .build()
         )
 
-        // 同步播放状态到 Lyricon（构造一个简化版 PlaybackStateCompat，仅含 state/position/speed）
+        // 同步播放状态到 Lyricon（SDK 的 setPlaybackState 接受 Boolean 重载）
         try {
-            val pb = PlaybackStateCompat.Builder()
-                .setState(
-                    if (isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED,
-                    position, 1f
-                )
-                .build()
-            lyriconProvider?.player?.setPlaybackState(pb)
+            lyriconProvider?.player?.setPlaybackState(isPlaying)
         } catch (_: Exception) {}
 
         mediaSession?.setMetadata(

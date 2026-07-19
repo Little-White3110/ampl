@@ -15,6 +15,7 @@ import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 import com.md3music.md3music.AudioPlaybackService
 import com.md3music.md3music.FloatingLyricService
+import io.github.proify.lyricon.lyric.model.Song
 
 class MainActivity : FlutterActivity() {
     private val FLOATING_CHANNEL = "com.md3music.md3music/floating_lyric"
@@ -219,7 +220,8 @@ class MainActivity : FlutterActivity() {
                     val arg = call.argument<Map<String, Any?>>("song")
                     if (arg == null) {
                         try {
-                            provider?.player?.setSong(null)
+                            // SDK 的 setSong 不接受 null，传一个空 Song 表示清空
+                            provider?.player?.setSong(Song())
                             result.success(true)
                         } catch (_: Exception) {
                             result.success(false)
@@ -256,12 +258,12 @@ class MainActivity : FlutterActivity() {
                     val state = call.argument<Number>("state")?.toInt()
                         ?: PlaybackStateCompat.STATE_NONE
                     val pos = call.argument<Number>("position")?.toLong() ?: 0L
-                    val speed = call.argument<Number>("speed")?.toFloat() ?: 1f
+                    // SDK 的 setPlaybackState 接受 Boolean，从 PlaybackStateCompat 状态码推导 isPlaying
+                    val isPlaying = state == PlaybackStateCompat.STATE_PLAYING
                     try {
-                        val pb = PlaybackStateCompat.Builder()
-                            .setState(state, pos, speed)
-                            .build()
-                        provider?.player?.setPlaybackState(pb)
+                        // 位置通过 setPosition 同步（原本打包在 PlaybackStateCompat 中）
+                        provider?.player?.setPosition(pos)
+                        provider?.player?.setPlaybackState(isPlaying)
                         result.success(true)
                     } catch (_: Exception) {
                         result.success(false)

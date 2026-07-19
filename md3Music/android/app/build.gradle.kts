@@ -61,6 +61,7 @@ dependencies {
     implementation("androidx.media:media:1.6.0")
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("io.github.proify.lyricon:provider:0.1.70")
+    implementation("io.github.proify.lyricon.lyric:model:0.1.70")
 }
 
 flutter {
