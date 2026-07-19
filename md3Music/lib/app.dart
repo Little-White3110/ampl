@@ -120,8 +120,12 @@ class _AppView extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       // 同时传 theme 和 darkTheme，并根据 ThemeProvider.effectiveSeedColor
       // 动态生成（支持「莫奈色」开关切换系统主色）。
+      // darkTheme 额外接收 useOledBlack 开关，开启时 surface 系列覆盖为纯黑。
       theme: AppTheme.lightThemeFromSeed(themeProvider.effectiveSeedColor),
-      darkTheme: AppTheme.darkThemeFromSeed(themeProvider.effectiveSeedColor),
+      darkTheme: AppTheme.darkThemeFromSeed(
+        themeProvider.effectiveSeedColor,
+        useOledBlack: themeProvider.useOledBlack,
+      ),
       themeMode: themeProvider.themeMode,
       navigatorKey: appNavigatorKey,
       initialRoute: '/',
