@@ -113,27 +113,47 @@ class LyriconProviderService {
       } catch (_) {}
       return;
     }
+    // 预处理：为每行计算一个合法的 end。
+    // LRC 解析器输出的 duration=0，导致 endTime==startTime，会被 SDK 的
+    // Song.normalize() 过滤（条件 begin < end 失败）。兜底策略：
+    // - LRC 行（duration==0）：end = 下一行 startTime；末行 end = begin + 5000
+    // - KRC 行（duration>0）：原样使用 endTime
+    // 同时过滤 text 为空白的行（normalize 也会过滤，提前过滤避免无意义传输）。
+    final List<Map<String, dynamic>> lyricMaps = [];
+    for (int i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      if (line.text.trim().isEmpty) continue;
+      final int begin = line.startTime;
+      final int end;
+      if (line.endTime > begin) {
+        end = line.endTime;
+      } else if (i + 1 < lines.length && lines[i + 1].startTime > begin) {
+        end = lines[i + 1].startTime;
+      } else {
+        end = begin + 5000; // 末行兜底 5 秒
+      }
+      lyricMaps.add(<String, dynamic>{
+        'begin': begin,
+        'end': end,
+        'text': line.text,
+        if (line.translation != null) 'translation': line.translation,
+        'words': line.words
+            .map((w) => <String, dynamic>{
+                  'text': w.text,
+                  'begin': w.startTime,
+                  'end': w.startTime + w.duration,
+                })
+            .toList(),
+      });
+    }
+
     final songMap = <String, dynamic>{
       'id': song.id,
       // 用 displayName 剥离 .mp3/.flac 等后缀，避免 Lyricon 标题显示带后缀
       'name': song.displayName,
       'artist': song.artist,
       'duration': song.duration.inMilliseconds,
-      'lyrics': lines
-          .map((line) => <String, dynamic>{
-                'begin': line.startTime,
-                'end': line.endTime,
-                'text': line.text,
-                if (line.translation != null) 'translation': line.translation,
-                'words': line.words
-                    .map((w) => <String, dynamic>{
-                          'text': w.text,
-                          'begin': w.startTime,
-                          'end': w.startTime + w.duration,
-                        })
-                    .toList(),
-              })
-          .toList(),
+      'lyrics': lyricMaps,
     };
     try {
       await _channel.invokeMethod('setSong', {'song': songMap});

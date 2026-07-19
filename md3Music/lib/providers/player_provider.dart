@@ -892,7 +892,9 @@ class PlayerProvider extends ChangeNotifier {
         if (ctx != null) {
           try {
             final kugou = ctx.read<KugouProvider>();
-            // 主动拉取当前歌曲的歌词（fmt='lrc' 会并发 LRC + KRC）。
+            // fmt='lrc' 触发 KugouApiClient 内部并发双请求（LRC + KRC），
+            // 返回的 KugouLyric 同时携带 decodedContent（LRC）与
+            // decodedKrcContent（KRC），由 displayLyric 优先返回 KRC 明文。
             // 不复用 kugou.lyric 缓存：KugouProvider 未暴露 lyricSongId getter，
             // 无法判断缓存是否属于当前歌曲（切歌瞬间缓存可能仍是上一首）。
             // getLyric 内部有 _lyricSongId 竞态保护，与 apple_lyrics_view

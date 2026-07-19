@@ -107,13 +107,22 @@ class AudioPlaybackService : Service() {
                     }
                 )
             }
-            return Song(
+            val song = Song(
                 id = arg["id"] as? String ?: "",
                 name = arg["name"] as? String ?: "",
                 artist = arg["artist"] as? String ?: "",
                 duration = (arg["duration"] as? Number)?.toLong() ?: 0L,
                 lyrics = lyrics
             )
+            // 调试日志：让用户用 adb logcat -s LyriconDebug 验证实际数据
+            // 关注点：lyrics.size 是否为 0；首行 begin/end 是否合法（begin < end）
+            val first = lyrics.firstOrNull()
+            android.util.Log.d("LyriconDebug",
+                "buildLyriconSong: name='${song.name}', artist='${song.artist}', " +
+                "duration=${song.duration}, lyrics.size=${lyrics.size}, " +
+                "first=${first?.let { "begin=${it.begin}, end=${it.end}, text='${it.text}', words=${it.words?.size ?: 0}" }}"
+            )
+            return song
         }
     }
 
