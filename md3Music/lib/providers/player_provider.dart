@@ -80,8 +80,6 @@ class PlayerProvider extends ChangeNotifier {
   Song? _lastLyriconSong;
   // 歌词异步拉取的竞态 token：每次切歌自增，过期结果被丢弃
   int _lyriconFetchToken = 0;
-  // Lyricon position 推送节流时间戳：500ms 一次，避免 IPC 过频卡 UI
-  DateTime? _lastLyriconPositionPush;
 
   PlayerProvider() {
     _initAudioService();
@@ -142,20 +140,15 @@ class PlayerProvider extends ChangeNotifier {
           _position = position;
           _updateNotificationPosition();
           notifyListeners();
-          // 周期性推送进度给 Lyricon（500ms 节流）
-          // Lyricon 中心服务的 position 不自行推进，必须由 Provider 周期上报，
-          // 否则歌词停在第一句不滚动。仅在播放中推送，暂停时跳过避免无意义 IPC。
+          // 直接转发给 Lyricon，无节流。
+          // positionStream 本身就是 ~200ms 周期（just_audio 默认），是天然节流。
+          // MethodChannel 是异步的，不阻塞 Dart UI；setPosition 是 fire-and-forget。
+          // 仅在播放中推送，暂停时跳过避免无意义 IPC。
           if (LyriconProviderService.instance.enabled && _isPlaying) {
-            final now = DateTime.now();
-            if (_lastLyriconPositionPush == null ||
-                now.difference(_lastLyriconPositionPush!) >=
-                    const Duration(milliseconds: 500)) {
-              _lastLyriconPositionPush = now;
-              try {
-                LyriconProviderService.instance
-                    .setPosition(position.inMilliseconds);
-              } catch (_) {}
-            }
+            try {
+              LyriconProviderService.instance
+                  .setPosition(position.inMilliseconds);
+            } catch (_) {}
           }
         },
         onError: (e) {
