@@ -88,6 +88,7 @@ class MainActivity : FlutterActivity() {
                         action = FloatingLyricService.ACTION_UPDATE_LYRIC
                         putExtra(FloatingLyricService.EXTRA_LYRIC, call.argument<String>("lyric") ?: "")
                         putExtra(FloatingLyricService.EXTRA_NEXT_LYRIC, call.argument<String>("nextLyric") ?: "")
+                        putExtra(FloatingLyricService.EXTRA_SUNG_CHAR_COUNT, call.argument<Int>("sungCharCount") ?: -1)
                     }
                     startService(intent)
                     result.success(true)

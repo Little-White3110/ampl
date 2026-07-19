@@ -5,6 +5,14 @@ import '../../providers/theme_provider.dart';
 import 'full_player.dart';
 import 'full_player_am.dart';
 
+/// 全局标志：当前 FullPlayer 是否在路由栈顶。
+///
+/// 由 [BottomSlideMaterialPageRoute] 构造时设 true、dispose 时设 false，
+/// [_UpFadeMainRoute] 监听此值决定是否对 _MainLayout 应用「向上淡出」过渡。
+/// 仅对 FullPlayer 生效，其他路由（/search /settings /playlist）push 时
+/// _MainLayout 走默认过渡。
+final ValueNotifier<bool> isFullPlayerOnTop = ValueNotifier<bool>(false);
+
 /// 从底部滑入的 [MaterialPageRoute] 子类。
 ///
 /// 用于 FullPlayer 路由，支持预测性返回手势（Android 14+）：
@@ -24,7 +32,17 @@ import 'full_player_am.dart';
 /// **作用域**：
 /// 只作用于 FullPlayer 路由，不影响其他 MaterialPageRoute（如 /search /settings）。
 class BottomSlideMaterialPageRoute<T> extends MaterialPageRoute<T> {
-  BottomSlideMaterialPageRoute({required super.builder});
+  BottomSlideMaterialPageRoute({required super.builder}) {
+    // push 时立即标记，_UpFadeMainRoute 据此应用 up-fade
+    isFullPlayerOnTop.value = true;
+  }
+
+  @override
+  void dispose() {
+    // pop 后清除标记
+    isFullPlayerOnTop.value = false;
+    super.dispose();
+  }
 
   @override
   Widget buildTransitions(

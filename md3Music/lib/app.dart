@@ -11,6 +11,7 @@ import 'modules/user/user_center_page.dart';
 import 'modules/user/favorites_page.dart';
 
 import 'modules/player/full_player.dart';
+import 'modules/player/full_player_route.dart';
 import 'modules/player/mini_player.dart';
 import 'modules/playlist/playlist_page.dart';
 import 'modules/search/search_page.dart';
@@ -26,6 +27,65 @@ import 'providers/player_provider.dart';
 import 'providers/playlist_collection_notifier.dart';
 import 'providers/theme_provider.dart';
 import 'services/nodejs_server.dart';
+
+/// 主页（`/`）专用的 [MaterialPageRoute] 子类。
+///
+/// 重写 [buildTransitions]：当 FullPlayer 在栈顶（[isFullPlayerOnTop] == true）
+/// 且 [secondaryAnimation] 驱动时，让 _MainLayout 向上偏移 15% + 淡出
+/// （Apple Music 经典效果）；其他路由 push 时走默认 transitions。
+///
+/// 通过 [isFullPlayerOnTop] 全局 ValueNotifier 限制只对 FullPlayer 生效，
+/// 避免 /search /settings /playlist 等也触发 up-fade。
+class _UpFadeMainRoute<T> extends MaterialPageRoute<T> {
+  _UpFadeMainRoute({required super.builder});
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    // 入场动画走默认（_MainLayout 是 initialRoute，入场无动画）
+    // 离场动画（被覆盖）：监听 isFullPlayerOnTop，true 时 up-fade，false 时默认
+    return AnimatedBuilder(
+      animation: Listenable.merge([secondaryAnimation, isFullPlayerOnTop]),
+      builder: (context, _) {
+        if (!isFullPlayerOnTop.value) {
+          return super.buildTransitions(
+            context,
+            animation,
+            secondaryAnimation,
+            child,
+          );
+        }
+        // FullPlayer 在栈顶：_MainLayout 向上偏移 15% + 淡出
+        final offset = Tween<Offset>(
+          begin: Offset.zero,
+          end: const Offset(0, -0.15),
+        ).animate(
+          CurvedAnimation(
+            parent: secondaryAnimation,
+            curve: Curves.easeOutCubic,
+          ),
+        );
+        final fade = Tween<double>(
+          begin: 1.0,
+          end: 0.0,
+        ).animate(
+          CurvedAnimation(
+            parent: secondaryAnimation,
+            curve: Curves.easeOutCubic,
+          ),
+        );
+        return FadeTransition(
+          opacity: fade,
+          child: SlideTransition(position: offset, child: child),
+        );
+      },
+    );
+  }
+}
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -66,7 +126,8 @@ class _AppView extends StatelessWidget {
       navigatorKey: appNavigatorKey,
       initialRoute: '/',
       routes: {
-        '/': (_) => const _MainLayout(),
+        // '/' 不在 routes 注册，改在 onGenerateRoute 用 _UpFadeMainRoute 创建，
+        // 以便 push FullPlayer 时主页面向上淡出（仅 FullPlayer 生效）
         '/search': (_) => const SearchPage(),
         '/library': (_) => const LibraryPage(),
         '/settings': (_) => const SettingsPage(),
@@ -76,6 +137,11 @@ class _AppView extends StatelessWidget {
         '/personal_fm': (_) => const PersonalFmPage(),
       },
       onGenerateRoute: (settings) {
+        if (settings.name == '/') {
+          return _UpFadeMainRoute<void>(
+            builder: (_) => const _MainLayout(),
+          );
+        }
         if (settings.name == '/playlist') {
           final playlist = settings.arguments as Playlist;
           return PageRouteBuilder(
