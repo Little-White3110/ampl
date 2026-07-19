@@ -7,6 +7,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      include_x86_64:
+        description: '额外构建 x86_64（模拟器用）'
+        type: boolean
+        required: false
+        default: false
 
 # CI 产物写入 Release 与 Artifact 所需权限
 permissions:
@@ -109,6 +115,10 @@ jobs:
 
   # ============================================================
   # Job 2: 构建 Release APK（split-per-abi）
+  #
+  # 默认只构建 arm64-v8a + armeabi-v7a 两个真机 ABI，
+  # 通过 workflow_dispatch 手动触发时勾选 include_x86_64
+  # 可额外构建 x86_64（模拟器用）。
   # ============================================================
   build-apk:
     name: Build APK (${{ matrix.abi }})
@@ -118,7 +128,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        abi: [arm64-v8a, armeabi-v7a, x86_64]
+        # 默认只构建真机 ABI；x86_64 仅在手动触发且勾选时追加
+        # 用动态 fromJSON 表达式避免矩阵 expand 产生重复组合
+        abi: ${{ (github.event_name == 'workflow_dispatch') && inputs.include_x86_64 && fromJSON('["arm64-v8a","armeabi-v7a","x86_64"]') || fromJSON('["arm64-v8a","armeabi-v7a"]') }}
     defaults:
       run:
         working-directory: md3Music
@@ -163,12 +175,15 @@ jobs:
           set -e
           echo "==> 上游 zzyoxml/md3Music Release 未发布 native-libs.zip"
           echo "==> 改为从上游 Release APK 提取 libnode.so，并从 nodejs.org 下载 v18 头文件"
-          mkdir -p android/app/src/main/jniLibs/arm64-v8a
-          mkdir -p android/app/src/main/jniLibs/armeabi-v7a
-          mkdir -p android/app/src/main/jniLibs/x86_64
+          # 默认只下载真机 ABI；x86_64 仅在手动触发且勾选时追加
+          ABIS=("arm64-v8a" "armeabi-v7a")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.include_x86_64 }}" = "true" ]; then
+            ABIS+=("x86_64")
+          fi
+          echo "==> 将下载以下 ABI 的 libnode.so: ${ABIS[*]}"
 
-          # 下载 3 个 APK 并提取 lib/<abi>/libnode.so
-          for abi in arm64-v8a armeabi-v7a x86_64; do
+          for abi in "${ABIS[@]}"; do
+            mkdir -p "android/app/src/main/jniLibs/${abi}"
             echo "==> 下载 app-${abi}-release.apk"
             curl -L --fail -o "app-${abi}.apk" \
               "https://github.com/zzyoxml/md3Music/releases/latest/download/app-${abi}-release.apk"
@@ -233,187 +248,7 @@ jobs:
           name: Release ${{ github.ref_name }}
 
   # ============================================================
-  # Job 3: 构建 Profile APK（v8a only，真机性能分析用）
-  # ============================================================
-  # Profile 模式 = AOT 编译（与 release 同性能）+ 保留 DevTools / Performance overlay。
-  # 用于真机性能诊断：装上后开发者选项打开「GPU 呈现模式分析」即可看每帧耗时。
-  build-profile-apk:
-    name: Build Profile APK (arm64-v8a)
-    needs: analyze-and-test
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    defaults:
-      run:
-        working-directory: md3Music
-
-    steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Set up Flutter SDK
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'ndk;28.2.13676358 cmake;3.22.1'
-
-      - name: Fetch pub dependencies
-        run: flutter pub get
-
-      - name: Download nodejs-mobile native libs (libnode.so)
-        shell: bash
-        run: |
-          set -e
-          mkdir -p android/app/src/main/jniLibs/arm64-v8a
-          mkdir -p android/app/src/main/jniLibs/armeabi-v7a
-          mkdir -p android/app/src/main/jniLibs/x86_64
-
-          # 仅需 arm64-v8a 的 libnode.so，但 CMake 要求三个 ABI 都存在
-          for abi in arm64-v8a armeabi-v7a x86_64; do
-            curl -L --fail -o "app-${abi}.apk" \
-              "https://github.com/zzyoxml/md3Music/releases/latest/download/app-${abi}-release.apk"
-            unzip -j "app-${abi}.apk" "lib/${abi}/libnode.so" \
-              -d "android/app/src/main/jniLibs/${abi}/"
-            rm "app-${abi}.apk"
-          done
-
-          # Node.js v18 头文件（tarball 结构：node-v18.20.4/include/node/...）
-          mkdir -p /tmp/node-headers
-          curl -L --fail \
-            "https://nodejs.org/dist/v18.20.4/node-v18.20.4-headers.tar.gz" \
-            | tar xz -C /tmp/node-headers
-          mkdir -p android/app/src/main/cpp/include
-          cp -r /tmp/node-headers/node-v18.20.4/include/node \
-            android/app/src/main/cpp/include/
-
-      - name: Build Profile APK (arm64-v8a only)
-        run: |
-          # --profile：AOT 编译 + 保留 Performance overlay / DevTools 连接能力
-          # --target-platform android-arm64：只构建 arm64，加速构建
-          flutter build apk --profile --target-platform android-arm64
-
-      - name: Rename Profile APK
-        shell: bash
-        run: |
-          mkdir -p artifacts
-          APK_PATH="build/app/outputs/flutter-apk/app-profile-arm64-v8a.apk"
-          # Profile 模式输出文件名可能是 app-profile.apk 或 app-profile-arm64-v8a.apk
-          if [ -f "$APK_PATH" ]; then
-            cp "$APK_PATH" "md3music-arm64-v8a-profile.apk"
-          elif [ -f "build/app/outputs/flutter-apk/app-profile.apk" ]; then
-            cp "build/app/outputs/flutter-apk/app-profile.apk" "md3music-arm64-v8a-profile.apk"
-          else
-            echo "❌ Profile APK 不存在"
-            ls -la build/app/outputs/flutter-apk/
-            exit 1
-          fi
-          ls -la "md3music-arm64-v8a-profile.apk"
-
-      - name: Upload Profile APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: md3music-apk-arm64-v8a-profile
-          path: md3Music/md3music-arm64-v8a-profile.apk
-          if-no-files-found: error
-          retention-days: 30
-
-  # ============================================================
-  # Job 4: 构建 Debug APK（v8a only，真机调试用）
-  # ============================================================
-  build-debug-apk:
-    name: Build Debug APK (arm64-v8a)
-    needs: analyze-and-test
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    defaults:
-      run:
-        working-directory: md3Music
-
-    steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Set up Flutter SDK
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'ndk;28.2.13676358 cmake;3.22.1'
-
-      - name: Fetch pub dependencies
-        run: flutter pub get
-
-      - name: Download nodejs-mobile native libs (libnode.so)
-        shell: bash
-        run: |
-          set -e
-          mkdir -p android/app/src/main/jniLibs/arm64-v8a
-          mkdir -p android/app/src/main/jniLibs/armeabi-v7a
-          mkdir -p android/app/src/main/jniLibs/x86_64
-
-          for abi in arm64-v8a armeabi-v7a x86_64; do
-            curl -L --fail -o "app-${abi}.apk" \
-              "https://github.com/zzyoxml/md3Music/releases/latest/download/app-${abi}-release.apk"
-            unzip -j "app-${abi}.apk" "lib/${abi}/libnode.so" \
-              -d "android/app/src/main/jniLibs/${abi}/"
-            rm "app-${abi}.apk"
-          done
-
-          mkdir -p /tmp/node-headers
-          curl -L --fail \
-            "https://nodejs.org/dist/v18.20.4/node-v18.20.4-headers.tar.gz" \
-            | tar xz -C /tmp/node-headers
-          mkdir -p android/app/src/main/cpp/include
-          cp -r /tmp/node-headers/node-v18.20.4/include/node \
-            android/app/src/main/cpp/include/
-
-      - name: Build Debug APK (arm64-v8a only)
-        run: |
-          flutter build apk --debug --target-platform android-arm64
-
-      - name: Rename Debug APK
-        shell: bash
-        run: |
-          APK_PATH="build/app/outputs/flutter-apk/app-debug.apk"
-          if [ -f "$APK_PATH" ]; then
-            cp "$APK_PATH" "md3music-arm64-v8a-debug.apk"
-            ls -la "md3music-arm64-v8a-debug.apk"
-          else
-            echo "❌ Debug APK 不存在"
-            ls -la build/app/outputs/flutter-apk/
-            exit 1
-          fi
-
-      - name: Upload Debug APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: md3music-apk-arm64-v8a-debug
-          path: md3Music/md3music-arm64-v8a-debug.apk
-          if-no-files-found: error
-          retention-days: 30
-
-  # ============================================================
-  # Job 5: 汇总打包结果（便于一次性下载全部 ABI）
+  # Job 3: 汇总打包结果（便于一次性下载全部 ABI）
   # ============================================================
   bundle-apks:
     name: Bundle All APKs
