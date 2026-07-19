@@ -8,17 +8,21 @@ class ThemeProvider extends ChangeNotifier {
   static const String _key = 'theme_mode';
   static const String _dynamicKey = 'use_dynamic_color';
   static const String _predictiveBackKey = 'predictive_back_enabled';
+  static const String _amStylePlayerKey = 'use_am_style_player';
 
   ThemeMode _themeMode = ThemeMode.system;
   bool _useDynamicColor = false;
   Color? _systemSeedColor;
   // 预见性返回手势开关，默认开启；关闭后改为弹出退出确认框
   bool _predictiveBackEnabled = true;
+  // Apple Music 风格播放页开关，默认关闭；开启后用 AM 风格 FullPlayer，关闭用原版 MD3
+  bool _useAmStylePlayer = false;
 
   ThemeMode get themeMode => _themeMode;
   bool get useDynamicColor => _useDynamicColor;
   Color? get systemSeedColor => _systemSeedColor;
   bool get predictiveBackEnabled => _predictiveBackEnabled;
+  bool get useAmStylePlayer => _useAmStylePlayer;
 
   /// 当前生效的种子色：
   /// - 启用系统主题色且成功取到 → 系统主色
@@ -32,6 +36,7 @@ class ThemeProvider extends ChangeNotifier {
     _loadThemeMode();
     _loadDynamicColor();
     _loadPredictiveBack();
+    _loadAmStylePlayer();
   }
 
   Future<void> _loadThemeMode() async {
@@ -102,6 +107,25 @@ class ThemeProvider extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_predictiveBackKey, enabled);
+  }
+
+  /// 加载「Apple Music 风格播放页」开关持久化值，默认关闭。
+  Future<void> _loadAmStylePlayer() async {
+    final prefs = await SharedPreferences.getInstance();
+    _useAmStylePlayer = prefs.getBool(_amStylePlayerKey) ?? false;
+    notifyListeners();
+  }
+
+  /// 切换「Apple Music 风格播放页」开关。
+  /// - 开启：用 AM 风格 FullPlayer（模糊封面背景 + 弹簧动画 + KRC 逐字歌词）
+  /// - 关闭：用原版 MD3 FullPlayer（标准主题色 + LRC 行级歌词）
+  /// 切换后已打开的 FullPlayer 不会立即换 widget，下次 push 时才走新分支。
+  Future<void> setUseAmStylePlayer(bool enabled) async {
+    if (_useAmStylePlayer == enabled) return;
+    _useAmStylePlayer = enabled;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_amStylePlayerKey, enabled);
   }
 
   void toggleTheme() {

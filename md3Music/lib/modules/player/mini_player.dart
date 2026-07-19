@@ -31,7 +31,9 @@ class MiniPlayer extends StatelessWidget {
         // - 重写 buildTransitions 用 animation 驱动 SlideTransition
         //   push 时从底部滑入，预测返回时系统驱动 animation 反向播放，
         //   页面自然跟随手势向下平移（而非默认的整页缩小）
-        Navigator.of(context).push(fullPlayerRoute());
+        // fullPlayerRoute 根据 ThemeProvider.useAmStylePlayer 开关
+        // 选择 AM 风格或原版 MD3 风格 FullPlayer widget
+        Navigator.of(context).push(fullPlayerRoute(context));
       },
       child: Container(
         // Container 在外提供整体背景色与顶部 border：

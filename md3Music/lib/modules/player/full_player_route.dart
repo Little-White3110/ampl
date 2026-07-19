@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../../providers/theme_provider.dart';
 import 'full_player.dart';
+import 'full_player_am.dart';
 
 /// 从底部滑入的 [MaterialPageRoute] 子类。
 ///
@@ -49,6 +52,17 @@ class BottomSlideMaterialPageRoute<T> extends MaterialPageRoute<T> {
   }
 }
 
-/// 便捷构造函数：创建 FullPlayer 路由实例。
-BottomSlideMaterialPageRoute<void> fullPlayerRoute() =>
-    BottomSlideMaterialPageRoute(builder: (_) => const FullPlayer());
+/// 根据 [ThemeProvider.useAmStylePlayer] 开关选择 FullPlayer 实现：
+/// - false（默认）：原版 MD3 风格 [FullPlayer]
+/// - true：Apple Music 风格 [AmStyleFullPlayer]
+///
+/// 切换开关后，已 push 的路由不会自动换 widget，下次 push 时才走新分支
+/// （符合「设置项」预期，实现简单可靠）。
+///
+/// 两个版本都用 [BottomSlideMaterialPageRoute]，统一从底部滑入 + 支持预测返回手势。
+BottomSlideMaterialPageRoute<void> fullPlayerRoute(BuildContext context) {
+  final useAm = context.read<ThemeProvider>().useAmStylePlayer;
+  return BottomSlideMaterialPageRoute(
+    builder: (_) => useAm ? const AmStyleFullPlayer() : const FullPlayer(),
+  );
+}

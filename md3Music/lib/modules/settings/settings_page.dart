@@ -35,6 +35,8 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _useDynamicColor = false;
   // 预见性返回手势开关（默认开启）
   bool _predictiveBackEnabled = true;
+  // Apple Music 风格播放页开关（默认关闭，开启后用 AM 风格 FullPlayer）
+  bool _useAmStylePlayer = false;
   String _appVersion = '';
 
   @override
@@ -59,6 +61,8 @@ class _SettingsPageState extends State<SettingsPage> {
     final useDynamicColor = context.read<ThemeProvider>().useDynamicColor;
     // 从 ThemeProvider 同步「预见性返回手势」开关状态
     final predictiveBack = context.read<ThemeProvider>().predictiveBackEnabled;
+    // 从 ThemeProvider 同步「Apple Music 风格播放页」开关状态
+    final useAmStylePlayer = context.read<ThemeProvider>().useAmStylePlayer;
 
     setState(() {
       _themeMode = themeMode;
@@ -67,6 +71,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _apiServerController.text = apiServerUrl;
       _useDynamicColor = useDynamicColor;
       _predictiveBackEnabled = predictiveBack;
+      _useAmStylePlayer = useAmStylePlayer;
     });
   }
 
@@ -248,6 +253,15 @@ class _SettingsPageState extends State<SettingsPage> {
           onChanged: (v) {
             setState(() => _predictiveBackEnabled = v);
             context.read<ThemeProvider>().setPredictiveBackEnabled(v);
+          },
+        ),
+        SwitchListTile(
+          title: const Text('Apple Music 风格播放页'),
+          subtitle: const Text('使用模糊封面背景 + 弹簧动画 + 逐字歌词（关闭则用原版 MD3 风格）'),
+          value: _useAmStylePlayer,
+          onChanged: (v) {
+            setState(() => _useAmStylePlayer = v);
+            context.read<ThemeProvider>().setUseAmStylePlayer(v);
           },
         ),
         const SizedBox(height: 8),
