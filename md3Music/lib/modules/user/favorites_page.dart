@@ -32,12 +32,6 @@ class _FavoritesPageState extends State<FavoritesPage> {
   final ScrollController _scrollController = ScrollController();
 
   @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -50,6 +44,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
   @override
   void dispose() {
     context.read<PlaylistCollectionNotifier>().removeListener(_onCollectionChanged);
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -248,7 +243,6 @@ class _FavoritesPageState extends State<FavoritesPage> {
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
     return Scaffold(
       appBar: ScrollAwareAppBar(
         title: '我的收藏',

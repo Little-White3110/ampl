@@ -110,7 +110,7 @@ class _CommentsViewState extends State<CommentsView> {
     final Color base = isDarkBg ? Colors.white : Colors.black;
     setState(() {
       _primaryTextColor = base;
-      _secondaryTextColor = base.withOpacity(0.7);
+      _secondaryTextColor = base.withValues(alpha: 0.7);
     });
   }
 

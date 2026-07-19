@@ -1,8 +1,4 @@
-import 'dart:io' show exit;
-
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show SystemNavigator;
 import 'package:provider/provider.dart';
 
 import 'core/layout/responsive_layout.dart';
@@ -299,35 +295,5 @@ class _MainLayoutState extends State<_MainLayout> with WidgetsBindingObserver {
         ),
       ),
     );
-  }
-
-  Future<void> _showExitDialog() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('退出应用'),
-        content: const Text('确定要退出 MD3Music 吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    if (kIsWeb) {
-      SystemNavigator.pop();
-    } else {
-      // 先让本地 Node.js 服务器停止监听（释放 8080 端口），再杀进程
-      // ignore: discarded_futures
-      NodeJsServer.stop();
-      // 立即杀进程，关闭所有后台服务（如 audio_service）
-      exit(0);
-    }
   }
 }
