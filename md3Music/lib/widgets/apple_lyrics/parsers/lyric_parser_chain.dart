@@ -57,7 +57,7 @@ class LyricParserChain {
   /// 若所有行均为空或元数据，降级为纯文本解析。
   static List<LyricLine> parse(String text) {
     try {
-      final format = _detectFormat(text);
+      final format = detectFormat(text);
       return _delegate(text, format);
     } catch (_) {
       // 任何意外都降级纯文本，保证不抛异常
@@ -88,7 +88,7 @@ class LyricParserChain {
   ///    - 匹配 [_lrcLineRegex] → [LyricFormat.lrc]
   ///    - 否则 → [LyricFormat.plaintext]
   /// 5. 若所有行都是空或元数据，降级为 [LyricFormat.plaintext]
-  static LyricFormat _detectFormat(String text) {
+  static LyricFormat detectFormat(String text) {
     if (text.isEmpty) return LyricFormat.plaintext;
 
     final lines = text.split(RegExp(r'\r?\n'));

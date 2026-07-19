@@ -100,11 +100,24 @@ class _CommentsViewState extends State<CommentsView> {
 
   /// 根据主色亮度应用反色文字。
   ///
-  /// - 主色为 null：默认白色（适配 FullPlayer 黑色背景）
-  /// - 主色亮度 < 0.5：暗背景 → 文字反色为白色
-  /// - 主色亮度 >= 0.5：亮背景 → 文字反色为黑色
-  /// 辅助文字 = 主文字颜色 × 70% 透明度（用户原话："黑色加上70%灰色"）。
+  /// - `artworkUri == null`（原版 MD3 FullPlayer 调用，未传封面 URL）：
+  ///   背景是 colorScheme.surface，跟随主题色，主文字用 onSurface、辅助文字用 onSurfaceVariant。
+  /// - `artworkUri != null`（AM 风格 FullPlayer 调用，传入封面 URL）：启用智能反色
+  ///   - 主色为 null：默认白色（适配 AM 黑色模糊封面背景）
+  ///   - 主色亮度 < 0.5：暗背景 → 文字反色为白色
+  ///   - 主色亮度 >= 0.5：亮背景 → 文字反色为黑色
+  /// 辅助文字 = 主文字颜色 × 70% 透明度（仅 AM 风格分支，用户原话："黑色加上70%灰色"）。
   void _applyPalette(Color? dominant) {
+    // 原版 MD3 风格：未传 artworkUri，背景是 surface，跟随主题色
+    if (widget.artworkUri == null) {
+      final colorScheme = Theme.of(context).colorScheme;
+      setState(() {
+        _primaryTextColor = colorScheme.onSurface;
+        _secondaryTextColor = colorScheme.onSurfaceVariant;
+      });
+      return;
+    }
+    // AM 风格：智能反色，根据封面主色亮度决定黑/白
     final bool isDarkBg =
         dominant == null ? true : dominant.computeLuminance() < 0.5;
     final Color base = isDarkBg ? Colors.white : Colors.black;

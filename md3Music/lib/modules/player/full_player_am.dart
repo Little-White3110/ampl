@@ -39,6 +39,8 @@ class _AmStyleFullPlayerState extends State<AmStyleFullPlayer>
   List<LyricLine> _parsedLyrics = const [];
   bool _isLoadingLyrics = false;
   String? _lastSongId;
+  // 当前歌词格式（KRC / LRC / plaintext），用于底部标注；null 表示尚未检测
+  LyricFormat? _lyricFormat;
 
   // === Task 19: 上滑展开 / 下拉收起手势 ===
   // 当前是否处于展开（全屏）状态。默认 true，进入页面即全屏。
@@ -112,6 +114,7 @@ class _AmStyleFullPlayerState extends State<AmStyleFullPlayer>
     setState(() {
       _isLoadingLyrics = true;
       _parsedLyrics = const [];
+      _lyricFormat = null;
     });
 
     try {
@@ -129,6 +132,8 @@ class _AmStyleFullPlayerState extends State<AmStyleFullPlayer>
           _isLoadingLyrics = false;
           // 解析器链自动检测格式（KRC/LRC/纯文本）并输出统一 List<LyricLine>
           _parsedLyrics = LyricParserChain.parse(lyricText);
+          // 同步记录格式，用于底部标注
+          _lyricFormat = LyricParserChain.detectFormat(lyricText);
         });
       }
     } catch (e) {
@@ -136,6 +141,7 @@ class _AmStyleFullPlayerState extends State<AmStyleFullPlayer>
         setState(() {
           _isLoadingLyrics = false;
           _parsedLyrics = const [];
+          _lyricFormat = null;
         });
       }
     }
@@ -486,6 +492,7 @@ class _AmStyleFullPlayerState extends State<AmStyleFullPlayer>
               ],
             ),
           ),
+          _buildLyricsFormatLabel(),
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: _buildControls(playerProvider, colorScheme),
@@ -606,6 +613,7 @@ class _AmStyleFullPlayerState extends State<AmStyleFullPlayer>
                 ),
 
                 // 控制区
+                _buildLyricsFormatLabel(),
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: _buildControls(playerProvider, colorScheme, isExpanded: true),
@@ -664,6 +672,7 @@ class _AmStyleFullPlayerState extends State<AmStyleFullPlayer>
                     ],
                   ),
                 ),
+                _buildLyricsFormatLabel(),
                 _buildControls(playerProvider, colorScheme, isExpanded: true),
                 const SizedBox(height: 8),
               ],
@@ -671,6 +680,35 @@ class _AmStyleFullPlayerState extends State<AmStyleFullPlayer>
           ),
         ],
       ),
+    );
+  }
+
+  /// 歌词 Tab 底部中央标注：根据 [_lyricFormat] 显示 "KRC 歌词" / "LRC 歌词" / "静态歌词"。
+  /// 用 AnimatedBuilder 监听 [_tabController]，仅当 index == 1（歌词 Tab）、
+  /// 非加载中且格式已知时显示。其他 Tab 不显示，避免占用空间。
+  Widget _buildLyricsFormatLabel() {
+    return AnimatedBuilder(
+      animation: _tabController,
+      builder: (context, _) {
+        final isLyricsTab = _tabController.index == 1;
+        if (!isLyricsTab || _isLoadingLyrics || _lyricFormat == null) {
+          return const SizedBox.shrink();
+        }
+        final label = switch (_lyricFormat!) {
+          LyricFormat.krc => 'KRC 歌词',
+          LyricFormat.lrc => 'LRC 歌词',
+          LyricFormat.plaintext => '静态歌词',
+        };
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Center(
+            child: Text(
+              label,
+              style: const TextStyle(color: Colors.white70, fontSize: 11),
+            ),
+          ),
+        );
+      },
     );
   }
 

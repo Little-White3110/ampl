@@ -493,7 +493,7 @@ class _PlaylistPageState extends State<PlaylistPage> {
                                         children: [
                                           Text(
                                             displayPlaylist.name,
-                                            maxLines: 2,
+                                            maxLines: 4,
                                             overflow: TextOverflow.ellipsis,
                                             style: textTheme.headlineSmall
                                                 ?.copyWith(
