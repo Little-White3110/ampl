@@ -49,25 +49,34 @@
 - **逐字 mask alpha 渲染**：白色文字 + alpha 渐变区分已播/未播（非颜色切换，参考 AMLL）
 - **临界阻尼弹簧物理动画**：主行缩放 `mass=2, damping=25, stiffness=100`，背景行 `mass=1, damping=20, stiffness=50`
 - **强调辉光（emphasize）**：长字（≥1000ms）触发辉光与缩放，末尾字加强 `amount *= 1.6, blur *= 1.5`
-- **间奏点动画**：相邻行间隔 ≥4000ms 时显示呼吸点，提前 250ms 结束准备下一行
+- **间奏点动画**（参照 AMLL 严格实现）：
+  - 相邻行间隔 ≥4000ms 时显示呼吸点，提前 250ms 结束准备下一行
+  - 入场动画 `easeOutBack` 400ms（带超出回弹）
+  - 消失动画 `easeInBack` 750ms（先放大 10% 再缩小到 0）
+  - 三个圆点作为整体以中间点为圆心缩放（Canvas save/translate/scale/restore）
+  - 帧时钟驱动动画（`_animationTimeMs` 每帧 `+= dt * 1000`），不受 positionStream 5fps 限制
+  - 间奏结束后 progress 驱动占位偏移与 spring 参数（`stiffness=40, damping=10`）平滑收起，避免歌词瞬移
 - **整行降级模式**：无逐字数据时整行渐入渐出，当前行高亮，非当前行透明度 0.2
 - **滚动控制器**：对齐位置 `alignPosition = 0.35`，普通播放动态 stiffness，seeking 模式 `stiffness=90, damping=15`
 - **行缩放**：当前行 `scale=1.0`，非当前行 `scale=0.97`，弹簧驱动平滑过渡
 - **点击跳转**：点击非当前行调用 `onSeek(line.startTime)`，自动 5000ms 后回弹
+- **字号 / 行距可调**：设置页长按标题进入歌词预览页，或全屏页长按歌词呼出偏好面板
 
 ### 📱 播放页 1:1 复刻
 
-- **模糊封面背景层**：`ImageFiltered` + `ImageFilter.blur`，sigmaX/Y=50
+- **模糊封面背景层**：`ImageFiltered` + `ImageFilter.blur`，sigmaX/Y=50，包 `RepaintBoundary` 缓存避免每帧重算
 - **半透明黑蒙版**：`Color(0x59000000)` 叠加
 - **上滑展开 / 下拉收起手势**：弹簧驱动切换迷你条 ↔ 全屏页
 - **控制栏重做**：上一首/播放暂停/下一首/进度条/时间，全屏页与迷你条两套样式
 - **歌词页独立主题**：固定白色文字，不读 MD3 主题色，双主题并存
+- **MiniPlayer 适配全面屏**：包 `SafeArea(bottom: true)` 吸收系统手势条高度，避免与全面屏手势冲突
+- **歌曲标题剥离文件扩展名**：`Song.displayName` getter 自动去除 `.mp3 / .flac / .wav / .ape / .m4a / .ogg / .aac / .wma / .opus` 后缀（mini 栏、全屏页、歌单列表统一生效）
 
 ### 🎧 沿用 md3Music 现有能力
 
 - 酷狗音乐音源（嵌入式 Node.js 服务器直连）
 - 多音质（128k / 320k / FLAC）、VIP 自动签到
-- 播放历史、收藏、下载管理、桌面歌词
+- 播放历史、收藏、下载管理、桌面歌词、系统媒体通知
 - Material Design 3 主题系统（仅歌词页不受影响）
 
 ---
@@ -182,7 +191,7 @@ flutter build apk --release --split-per-abi
 | 禁用符号检查 | grep `lib/` 是否出现 `TTML` / `WebView` / `package:xml` |
 | `flutter analyze` | 静态分析（语法、类型、lint） |
 | `dart format --set-exit-if-changed` | 格式检查（仅报告，不阻断） |
-| `flutter test --coverage` | 全量单元测试（覆盖解析器、弹簧、渲染器、控制器、Provider） |
+| `flutter test --coverage` | 全量单元测试（覆盖解析器、弹簧、渲染器、控制器、Provider，共 16 个测试文件） |
 | Coverage 上传 | 作为 artifact 上传 `coverage/` |
 | 测试报告 | 用 `dorny/test-reporter` 把 JUnit XML 渲染到 PR Check |
 
@@ -193,7 +202,7 @@ flutter build apk --release --split-per-abi
 | 步骤 | 内容 |
 |------|------|
 | 下载 native-libs.zip | 从 md3Music 上游 Release 拉取 `libnode.so` |
-| `flutter build apk --release --split-per-abi` | 构建 Release APK |
+| `flutter build apk --profile --split-per-abi` | 构建 Profile APK（保留调试符号但接近 Release 性能） |
 | 上传 Artifact | 每个 ABI 一个 artifact，保留 30 天 |
 | Release 附件（tag 触发时） | 自动附加到 GitHub Release |
 
