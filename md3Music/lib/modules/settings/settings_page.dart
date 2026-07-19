@@ -9,11 +9,13 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/theme/app_theme.dart';
 import '../../data/repositories/settings_repository.dart';
 import '../../providers/kugou_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../widgets/apple_lyrics/layout/lyric_preferences_panel.dart';
 import '../../widgets/apple_lyrics/preview/lyrics_preview_page.dart';
+import '../../widgets/seed_color_picker.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -186,6 +188,10 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _buildAppearanceSection(ColorScheme colorScheme) {
+    final themeProvider = context.read<ThemeProvider>();
+    // 仅 ThemeMode.light 时禁用 OLED 开关；dark 与 system 均可勾选。
+    // system 模式下勾选后，等系统切到深色时 darkTheme 自动应用纯黑（MaterialApp 机制）。
+    final canToggleOled = _themeMode != ThemeMode.light;
     return Column(
       children: [
         Padding(
@@ -232,14 +238,48 @@ class _SettingsPageState extends State<SettingsPage> {
             },
           ),
         ),
+        // 主题色入口：点击弹出 8 色预设面板。
+        // 系统色开启时用 IgnorePointer 禁用点击（不灰显，色块仍显示当前 effectiveSeedColor）。
+        IgnorePointer(
+          ignoring: themeProvider.useDynamicColor,
+          child: ListTile(
+            leading: const Icon(Icons.palette),
+            title: const Text('主题色'),
+            subtitle: Text(
+              themeProvider.useDynamicColor
+                  ? '跟随系统壁纸取色'
+                  : '手动选择种子色',
+            ),
+            trailing: Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                color: themeProvider.effectiveSeedColor,
+                shape: BoxShape.circle,
+                border: Border.all(color: colorScheme.outline, width: 1.5),
+              ),
+            ),
+            onTap: () => _showSeedColorPicker(themeProvider),
+          ),
+        ),
         SwitchListTile(
           title: const Text('使用系统主题色'),
-          subtitle: const Text('跟随系统壁纸取色（Android 12+ 莫奈色）'),
+          subtitle: const Text('跟随系统壁纸取色（Android 12+ 莫奈色，HCT 多点量化）'),
           value: _useDynamicColor,
           onChanged: (v) {
             setState(() => _useDynamicColor = v);
             context.read<ThemeProvider>().setUseDynamicColor(v);
           },
+        ),
+        // OLED 纯黑开关：light 模式禁用；dark 与 system 可勾选。
+        // system 模式下勾选后，系统切深色时自动生效，切浅色时不影响 lightTheme。
+        SwitchListTile(
+          title: const Text('OLED 纯黑深色'),
+          subtitle: const Text('将深色背景改为纯黑（仅深色模式生效，节省 OLED 电量）'),
+          value: themeProvider.useOledBlack,
+          onChanged: canToggleOled
+              ? (v) => themeProvider.setUseOledBlack(v)
+              : null,
         ),
         SwitchListTile(
           title: const Text('Apple Music 风格播放页'),
@@ -252,6 +292,23 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         const SizedBox(height: 8),
       ],
+    );
+  }
+
+  /// 弹出 8 色预设种子色选择面板。
+  /// 选择后调用 ThemeProvider.setManualSeedColor 持久化并立即生效。
+  void _showSeedColorPicker(ThemeProvider themeProvider) {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SeedColorPicker(
+        currentColor:
+            themeProvider.manualSeedColor ?? AppTheme.defaultSeedColor,
+        onSelected: (color) {
+          themeProvider.setManualSeedColor(color);
+          Navigator.pop(ctx);
+        },
+      ),
     );
   }
 
