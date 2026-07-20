@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feature/download-service-optimization']
     tags: ['v*']
   pull_request:
     branches: [main]
@@ -197,28 +197,46 @@ jobs:
 
           rm native-libs.zip
 
-      - name: Build APK for ${{ matrix.abi }}
+      - name: Build Release APK for ${{ matrix.abi }}
         run: |
           flutter build apk --release --split-per-abi --target-platform android-${{ matrix.abi == 'arm64-v8a' && 'arm64' || matrix.abi == 'armeabi-v7a' && 'arm' || 'x64' }}
 
-      - name: Rename APK
+      - name: Build Debug APK for ${{ matrix.abi }}
+        run: |
+          flutter build apk --debug --split-per-abi --target-platform android-${{ matrix.abi == 'arm64-v8a' && 'arm64' || matrix.abi == 'armeabi-v7a' && 'arm' || 'x64' }}
+
+      - name: Rename APKs
         shell: bash
         run: |
           mkdir -p artifacts
-          APK_PATH="build/app/outputs/flutter-apk/app-${{ matrix.abi }}-release.apk"
-          if [ -f "$APK_PATH" ]; then
-            cp "$APK_PATH" "md3music-${{ matrix.abi }}-release.apk"
-            cp "$APK_PATH" "artifacts/md3music-${{ matrix.abi }}-release.apk"
+
+          # Release APK
+          REL_PATH="build/app/outputs/flutter-apk/app-${{ matrix.abi }}-release.apk"
+          if [ -f "$REL_PATH" ]; then
+            cp "$REL_PATH" "md3music-${{ matrix.abi }}-release.apk"
+            cp "$REL_PATH" "artifacts/md3music-${{ matrix.abi }}-release.apk"
             ls -la "md3music-${{ matrix.abi }}-release.apk"
           else
-            echo "❌ APK 不存在: $APK_PATH"; exit 1
+            echo "❌ Release APK 不存在: $REL_PATH"; exit 1
           fi
 
-      - name: Upload APK artifact
+          # Debug APK
+          DBG_PATH="build/app/outputs/flutter-apk/app-${{ matrix.abi }}-debug.apk"
+          if [ -f "$DBG_PATH" ]; then
+            cp "$DBG_PATH" "md3music-${{ matrix.abi }}-debug.apk"
+            cp "$DBG_PATH" "artifacts/md3music-${{ matrix.abi }}-debug.apk"
+            ls -la "md3music-${{ matrix.abi }}-debug.apk"
+          else
+            echo "⚠️ Debug APK 不存在: $DBG_PATH（跳过）"
+          fi
+
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
           name: md3music-apk-${{ matrix.abi }}
-          path: md3Music/md3music-${{ matrix.abi }}-release.apk
+          path: |
+            md3Music/md3music-${{ matrix.abi }}-release.apk
+            md3Music/md3music-${{ matrix.abi }}-debug.apk
           if-no-files-found: error
           retention-days: 30
 

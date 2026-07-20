@@ -43,6 +43,8 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _lyriconEnabled = false;
   bool _lyriconDisplayTranslation = true;
   bool _lyriconDisplayRoma = false;
+  // 下载目录（默认系统 Downloads 下的 MD3Music 子目录）
+  String _downloadDir = SettingsRepository.defaultDownloadDir;
 
   @override
   void initState() {
@@ -103,6 +105,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final quality = await _settingsRepository.getDefaultQuality();
     final autoReceiveVip = await _settingsRepository.getAutoReceiveVip();
     final apiServerUrl = await _settingsRepository.getApiServerUrl();
+    final downloadDir = await _settingsRepository.getDownloadDir();
     // 从 ThemeProvider 同步「使用系统主题色」开关状态
     final useDynamicColor = context.read<ThemeProvider>().useDynamicColor;
     // 从 ThemeProvider 同步「Apple Music 风格播放页」开关状态
@@ -115,6 +118,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _apiServerController.text = apiServerUrl;
       _useDynamicColor = useDynamicColor;
       _useAmStylePlayer = useAmStylePlayer;
+      _downloadDir = downloadDir;
     });
   }
 
@@ -186,6 +190,9 @@ class _SettingsPageState extends State<SettingsPage> {
           const Divider(),
           _buildSectionHeader('在线音乐'),
           _buildOnlineMusicSection(colorScheme),
+          const Divider(),
+          _buildSectionHeader('下载'),
+          _buildDownloadSection(colorScheme),
           const Divider(),
           _buildSectionHeader('缓存'),
           _buildCacheSection(colorScheme),
@@ -514,6 +521,73 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildDownloadSection(ColorScheme colorScheme) {
+    return Column(
+      children: [
+        ListTile(
+          leading: const Icon(Icons.download),
+          title: const Text('下载目录'),
+          subtitle: Text(
+            _downloadDir,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+          trailing: const Icon(Icons.chevron_right, size: 18),
+          onTap: _showDownloadDirDialog,
+        ),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Text(
+            '下载歌曲会保存到此目录并嵌入标题/艺术家/专辑/封面/歌词。\n'
+            '首次下载需要授予「所有文件访问权限」。',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showDownloadDirDialog() {
+    final controller = TextEditingController(text: _downloadDir);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('下载目录'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: '目录绝对路径',
+            hintText: '/storage/emulated/0/Download/MD3Music',
+            border: OutlineInputBorder(),
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final path = controller.text.trim();
+              if (path.isEmpty) return;
+              await _settingsRepository.setDownloadDir(path);
+              setState(() {
+                _downloadDir = path;
+              });
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
     );
   }
 
