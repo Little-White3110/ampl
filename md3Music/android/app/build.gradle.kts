@@ -63,7 +63,8 @@ dependencies {
     implementation("io.github.proify.lyricon:provider:0.1.70")
     implementation("io.github.proify.lyricon.lyric:model:0.1.70")
     // JAudioTagger 社区 Android 适配分叉：写 MP3 ID3v2 / FLAC VorbisComment 标签
-    implementation("com.github.AdrienPoupa:jaudiotagger:1.0.1")
+    // JitPack 仅 2.2.3 构建可用（1.0.1 不存在），见 https://jitpack.io/api/builds/com.github.AdrienPoupa/jaudiotagger
+    implementation("com.github.AdrienPoupa:jaudiotagger:2.2.3")
 }
 
 flutter {
