@@ -135,9 +135,11 @@ class AudioService {
   ///
   /// 背景：Android AUDIOFOCUS_LOSS（永久丢失，如抖音请求 AUDIOFOCUS_GAIN）
   /// 只触发 interruption begin，不触发 interruption end。
-  /// 当用户从抖音切回本 app 时，AppLifecycleState 变为 resumed，
-  /// 此时检查 _pausedByInterruption 标记，如果仍为 true 说明用户没手动操作过，
-  /// 可以安全恢复播放。
+  /// 当抖音关闭释放焦点时，Android 发送 AUDIOFOCUS_GAIN 回调给
+  /// audio_session 的 listener，但 EventChannel 可能在后台无法
+  /// 传递事件到 Dart 层。因此在 app 回前台时，主动重新请求音频焦点
+  /// （session.setActive(true)），触发 Android AudioManager 的
+  /// AUDIOFOCUS_GAIN 回调，从而通过 EventChannel 发射 interruption end 事件。
   ///
   /// 返回 true 表示已恢复播放，false 表示不需要恢复（用户已手动操作或正在播放）。
   Future<bool> tryResumeAfterFocusLoss() async {
@@ -146,12 +148,35 @@ class AudioService {
       'playing=${_player.playing}, processingState=${_player.processingState}',
       name: 'AudioService',
     );
+    if (!_pausedByInterruption) return false;
+
+    // 重新激活 audio session，触发 Android 重新请求音频焦点。
+    // 如果其他 app 已释放焦点，AudioManager 会立即回调 AUDIOFOCUS_GAIN，
+    // audio_session 将发射 interruption end 事件，interruptionEventStream
+    // 的监听器会自动恢复播放（检查 _pausedByInterruption 标记）。
+    // 如果其他 app 仍持有焦点，setActive 会失败或焦点请求被拒绝，
+    // _pausedByInterruption 保持 true，下次 resumed 时再试。
+    try {
+      final session = await AudioSession.instance;
+      await session.setActive(true);
+      developer.log('tryResumeAfterFocusLoss: session.setActive(true) 完成',
+          name: 'AudioService');
+    } catch (e) {
+      developer.log('tryResumeAfterFocusLoss: session.setActive 失败: $e',
+          name: 'AudioService');
+    }
+
+    // setActive 可能触发 interruption end → play()，也可能不触发。
+    // 作为兜底：如果 setActive 后 _pausedByInterruption 仍为 true
+    // 且播放器未在播放，说明焦点恢复事件可能被延迟或丢失。
+    // 等一小段时间后检查，如果还没恢复就手动恢复。
+    await Future.delayed(const Duration(milliseconds: 500));
     if (_pausedByInterruption &&
         !_player.playing &&
         _player.processingState != ProcessingState.idle &&
         _player.processingState != ProcessingState.completed) {
       _pausedByInterruption = false;
-      developer.log('恢复播放：app 回前台触发主动恢复', name: 'AudioService');
+      developer.log('恢复播放：setActive 后兜底恢复', name: 'AudioService');
       await _player.play();
       return true;
     }

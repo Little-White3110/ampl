@@ -127,8 +127,11 @@ class PlayerProvider extends ChangeNotifier {
           }
   }
 
-  /// 恢复上次会话：仅设置播放列表/当前歌曲/进度到 UI，不设置音频源、不播放。
-  /// 用户按播放键时由 [resume] 触发懒加载音频源 + seek 到上次进度。
+  /// 恢复上次会话：设置播放列表/当前歌曲/进度，并预加载音频源。
+  ///
+  /// 预加载音频源（setUrl + seek，不播放）的目的是：
+  /// 1. 让 durationStream 从音频引擎获取真实时长，mini player 进度条立即可见
+  /// 2. seek 到上次进度，用户按播放键时直接续播，无需再次加载
   Future<void> restoreLastSession() async {
     try {
       final saved = await _playbackStateRepo.load();
@@ -138,14 +141,22 @@ class PlayerProvider extends ChangeNotifier {
       _currentIndex = saved.currentIndex;
       _currentSong = saved.playlist[saved.currentIndex];
       _position = saved.position;
-      // 用歌曲元数据中的 duration 预填 _duration，让 mini player 进度条立即可见。
-      // 音频源未加载时 durationStream 不会发射事件，否则进度条会显示为 0。
-      _duration = _currentSong?.duration;
+      _duration = _currentSong?.duration; // fallback，音频加载后会被真实值覆盖
       _pendingResumePosition = saved.position;
       // 重启后强制暂停：用户必须主动按播放键，避免冷启动突然出声
       _isPlaying = false;
       notifyListeners();
       _updateNotification();
+
+      // 预加载音频源（不播放），让 durationStream 发射真实时长，
+      // mini player 进度条立即可见，不需要等用户点播放。
+      // _resolveAndPlayCurrentSong 会解析在线 URL 并调用 _setUrlAndPlay(playAfter: false)
+      if (_currentSong != null && saved.position > Duration.zero) {
+        await _resolveAndPlayCurrentSong(
+            seekTo: saved.position, playAfter: false);
+        // 预加载完成，音频已就绪。清除标记，resume() 不需要再次加载。
+        _pendingResumePosition = null;
+      }
     } catch (_) {}
   }
 
@@ -158,12 +169,6 @@ class PlayerProvider extends ChangeNotifier {
   /// 如果当前是被音频焦点打断（如抖音抢占 AUDIOFOCUS_GAIN）导致的暂停，
   /// 主动恢复播放。用户手动暂停的情况下不会恢复。
   Future<void> tryResumeAfterFocusLoss() async {
-    // 如果有待恢复的上次会话进度，走懒加载恢复流程
-    if (_pendingResumePosition != null && _currentSong != null) {
-      // 不自动恢复上次会话——仅设置标记，等用户主动按播放
-      // 这里只处理"被焦点打断的暂停"情况
-      return;
-    }
     await _audioService?.tryResumeAfterFocusLoss();
   }
 
@@ -636,7 +641,7 @@ class PlayerProvider extends ChangeNotifier {
     }
   }
 
-  Future<bool> _resolveAndPlayCurrentSong({Duration? seekTo}) async {
+  Future<bool> _resolveAndPlayCurrentSong({Duration? seekTo, bool playAfter = true}) async {
     if (_currentSong == null) return false;
 
     if (_currentSong!.isOnline && _currentSong!.url == null) {
@@ -677,8 +682,8 @@ class PlayerProvider extends ChangeNotifier {
           ? _currentSong!.url
           : _currentSong!.localPath;
       if (playbackUrl != null && playbackUrl.isNotEmpty) {
-        // seekTo 仅在恢复上次会话时非空，由 resume() 传入
-        await _setUrlAndPlay(playbackUrl, seekTo: seekTo);
+        // seekTo 仅在恢复上次会话时非空，由 resume() 或 restoreLastSession() 传入
+        await _setUrlAndPlay(playbackUrl, seekTo: seekTo, playAfter: playAfter);
       }
     }
     return true;
