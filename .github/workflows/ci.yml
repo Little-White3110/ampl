@@ -186,7 +186,12 @@ jobs:
           curl -L --fail -o /tmp/native-libs.zip \
             "https://github.com/zzyoxml/md3Music/releases/download/native-libs/native-libs.zip"
 
-          # 用 Python 直接从 zip 提取所需文件到最终位置，避免中间解压环节出错
+          # 用 Python 直接从 zip 提取所需文件到当前目录。
+          # 已确认 zip 内路径就是项目目标相对路径：
+          #   android/app/src/main/jniLibs/<abi>/libnode.so
+          #   android/app/src/main/cpp/CMakeLists.txt
+          #   android/app/src/main/cpp/nodejs_bridge.cpp
+          #   android/app/src/main/cpp/include/node/*.h
           python3 << 'PYEOF'
           import zipfile, os, sys
           z = zipfile.ZipFile('/tmp/native-libs.zip')
@@ -194,39 +199,45 @@ jobs:
           print('==> zip entries (first 20):')
           for n in names[:20]:
               print('  ', n)
-          # 处理所有 ABI 的 libnode.so
-          abis = ['arm64-v8a', 'armeabi-v7a', 'x86_64']
-          for abi in abis:
-              # zip 内路径用 forward slash（Python 自动转换 backslash）
-              candidate = f'jniLibs/{abi}/libnode.so'
-              if candidate in names:
-                  dst_dir = f'android/app/src/main/jniLibs/{abi}'
-                  os.makedirs(dst_dir, exist_ok=True)
-                  dst = f'{dst_dir}/libnode.so'
-                  with z.open(candidate) as src, open(dst, 'wb') as out:
-                      out.write(src.read())
-                  print(f'  ✓ extracted {candidate} -> {dst} ({os.path.getsize(dst)} bytes)')
-              else:
-                  print(f'  ✗ {candidate} not in zip')
-          # 提取 cpp/include/node/*.h 到 android/app/src/main/cpp/include/node/
-          node_files = [n for n in names if n.startswith('cpp/include/node/')]
-          if not node_files:
-              print('  ✗ cpp/include/node/*.h not in zip, fallback to nodejs.org')
-              sys.exit(2)
-          dst_dir = 'android/app/src/main/cpp/include/node'
-          os.makedirs(dst_dir, exist_ok=True)
-          for n in node_files:
-              # 保留相对路径：cpp/include/node/foo.h -> android/app/src/main/cpp/include/node/foo.h
-              rel = n[len('cpp/include/node/'):]
+          # 只提取我们需要的文件：jniLibs/*/libnode.so + cpp/include/node/*
+          wanted_prefixes = (
+              'android/app/src/main/jniLibs/',
+              'android/app/src/main/cpp/include/node/',
+          )
+          # 同时兼容旧版 zip 结构：jniLibs/ + cpp/include/node/
+          legacy_prefixes = (
+              'jniLibs/',
+              'cpp/include/node/',
+          )
+          # 旧结构前缀 -> 新结构前缀的映射
+          legacy_map = {
+              'jniLibs/': 'android/app/src/main/jniLibs/',
+              'cpp/include/node/': 'android/app/src/main/cpp/include/node/',
+          }
+          extracted = 0
+          for n in names:
               # 防御 zip slip
-              if rel.startswith('/') or '..' in rel:
+              if n.startswith('/') or '..' in n:
                   continue
-              # 可能是子目录
-              dst = os.path.join(dst_dir, rel)
-              os.makedirs(os.path.dirname(dst), exist_ok=True)
+              # 新版结构：路径已带 android/app/src/main/ 前缀
+              if n.startswith(wanted_prefixes):
+                  dst = n
+              # 旧版结构：需要补前缀
+              elif any(n.startswith(p) for p in legacy_prefixes):
+                  for old_p, new_p in legacy_map.items():
+                      if n.startswith(old_p):
+                          dst = new_p + n[len(old_p):]
+                          break
+              else:
+                  continue
+              os.makedirs(os.path.dirname(dst) or '.', exist_ok=True)
               with z.open(n) as src, open(dst, 'wb') as out:
                   out.write(src.read())
-          print(f'  ✓ extracted {len(node_files)} node headers')
+              extracted += 1
+          print(f'==> extracted {extracted} files')
+          if extracted == 0:
+              print('❌ no wanted files found in zip')
+              sys.exit(2)
           PYEOF
 
           # 校验
