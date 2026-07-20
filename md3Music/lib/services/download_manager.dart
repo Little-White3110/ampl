@@ -109,7 +109,7 @@ class DownloadManager {
       // 1. 新命名规则：artist - title.ext
       if (downloadDir != null && artist != null && title != null) {
         final safeArtist = _sanitize(artist);
-        final safeTitle = _sanitize(title);
+        final safeTitle = _sanitize(_stripAudioExtension(title));
         for (final ext in exts) {
           final file = File('$downloadDir/$safeArtist - $safeTitle.$ext');
           if (await file.exists()) {
@@ -146,7 +146,8 @@ class DownloadManager {
   Future<String> _buildFilePath(String dir, DownloadTask task) async {
     final ext = _getExtFromUrl(task.downloadUrl);
     final safeArtist = _sanitize(task.artist);
-    final safeTitle = _sanitize(task.title);
+    // 去掉标题中已带的音频扩展名，避免双后缀（如 "歌名.mp3" + ".flac"）
+    final safeTitle = _sanitize(_stripAudioExtension(task.title));
     var name = '$safeArtist - $safeTitle.$ext';
     var path = '$dir/$name';
     if (!await File(path).exists()) return path;
@@ -227,6 +228,25 @@ class DownloadManager {
     } catch (e) {
       return filePath;
     }
+  }
+
+  /// 去掉文件名末尾的音频扩展名（如 "歌名.mp3" → "歌名"），
+  /// 避免标题自带扩展名时 _buildFilePath 产生双后缀。
+  String _stripAudioExtension(String name) {
+    final knownExts = ['mp3', 'flac', 'aac', 'ogg', 'wav', 'm4a'];
+    var result = name.trim();
+    // 最多剥两层（处理 ".mp3.flac" 这种已有双后缀的极端情况）
+    for (var i = 0; i < 2; i++) {
+      final dotIdx = result.lastIndexOf('.');
+      if (dotIdx < 0) break;
+      final ext = result.substring(dotIdx + 1).toLowerCase();
+      if (knownExts.contains(ext)) {
+        result = result.substring(0, dotIdx).trim();
+      } else {
+        break;
+      }
+    }
+    return result.isEmpty ? 'unknown' : result;
   }
 
   /// 过滤文件系统非法字符（Windows / Android 通用）：`\ / : * ? " < > |`
