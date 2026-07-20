@@ -28,6 +28,10 @@ class KugouApiClient {
   }
 
   late final Dio _dio;
+
+  /// 暴露 Dio 实例供外部使用（如 DownloadsProvider 下载封面图）。
+  Dio get dio => _dio;
+
   String? _token;
   String? _userid;
   String? _vipToken;
@@ -184,15 +188,19 @@ class KugouApiClient {
         _vipToken = prefs.getString(userVipKey);
         
         if (_token != null && _userid != null) {
-          print('✅ [Auth] 从存储恢复用户 $currentUserid 的登录状态');
+          print('✅ [Auth] 从存储加载登录状态，用户ID: $_userid');
         } else {
-          print('⚠️ [Auth] 用户 $currentUserid 的凭证不完整，需要重新登录');
-          _token = null;
-          _userid = null;
-          _vipToken = null;
+          // 用户隔离键没有，尝试旧版本全局键
+          _token = prefs.getString('kugou_token');
+          _userid = prefs.getString('kugou_userid');
+          _vipToken = prefs.getString('kugou_vip_token');
+          
+          if (_token != null && _userid != null) {
+            print('⚠️ [Auth] 检测到旧版本登录状态，建议重新登录');
+          }
         }
       } else {
-        // 兼容旧版本：尝试读取全局键
+        // 没有 currentUserid，尝试旧版本全局键
         _token = prefs.getString('kugou_token');
         _userid = prefs.getString('kugou_userid');
         _vipToken = prefs.getString('kugou_vip_token');
@@ -265,32 +273,27 @@ class KugouApiClient {
     try {
       final prefs = await SharedPreferences.getInstance();
       
-      // 清除当前用户的键
-      if (oldUserid != null) {
+      // 清除用户隔离的键
+      if (oldUserid != null && oldUserid.isNotEmpty) {
         await prefs.remove('kugou_token_$oldUserid');
         await prefs.remove('kugou_userid_$oldUserid');
         await prefs.remove('kugou_vip_token_$oldUserid');
       }
       
-      // 清除全局键（兼容旧版本）
+      // 清除所有可能的旧版本键
       await prefs.remove('kugou_token');
       await prefs.remove('kugou_userid');
       await prefs.remove('kugou_vip_token');
-      await prefs.remove('kugou_dfid');
       await prefs.remove('kugou_current_userid');
+      await prefs.remove('kugou_dfid');
       
-      print('✅ [Auth] 已清除用户 $oldUserid 的登录状态');
-          } catch (e) {
+      print('✅ [Auth] 已清除登录状态');
+    } catch (e) {
       print('❌ [Auth] 清除登录状态失败: $e');
-          }
+    }
   }
 
-  String? get token => _token;
-  String? get userid => _userid;
-  String? get vipToken => _vipToken;
-  String? get dfid => _dfid;
-  bool get isLoggedIn => _token != null && _userid != null;
-  bool get hasVipToken => _vipToken != null && _vipToken!.isNotEmpty;
+  // ==================== Device ====================
 
   Future<void> registerDevice() async {
     try {
@@ -343,15 +346,15 @@ class KugouApiClient {
     if (json == null) return null;
     try {
       final data = json['data'];
-      List<dynamic> list = [];
+      List<dynamic> list;
       if (data is List) {
         list = data;
-      } else if (data is Map) {
-        list = data['info'] ?? data['list'] ?? [];
+      } else if (data is Map<String, dynamic>) {
+        list = (data['list'] ?? data['info'] ?? []) as List<dynamic>;
+      } else {
+        list = [];
       }
-      return list
-          .map((e) => KugouAlbumBrief.fromJson(e as Map<String, dynamic>))
-          .toList();
+      return list.map((e) => KugouAlbumBrief.fromJson(e as Map<String, dynamic>)).toList();
     } catch (e) {
             return null;
     }
@@ -360,20 +363,20 @@ class KugouApiClient {
   Future<List<KugouPlaylistBrief>?> searchPlaylists(String keywords, {int page = 1, int pagesize = 20}) async {
     final json = await _get(
       KugouEndpoints.searchSpecial,
-      queryParameters: {'keyword': keywords, 'page': page, 'pagesize': pagesize},
+      queryParameters: {'keywords': keywords, 'page': page, 'pagesize': pagesize},
     );
     if (json == null) return null;
     try {
       final data = json['data'];
-      List<dynamic> list = [];
+      List<dynamic> list;
       if (data is List) {
         list = data;
-      } else if (data is Map) {
-        list = data['info'] ?? data['list'] ?? [];
+      } else if (data is Map<String, dynamic>) {
+        list = (data['list'] ?? data['info'] ?? []) as List<dynamic>;
+      } else {
+        list = [];
       }
-      return list
-          .map((e) => KugouPlaylistBrief.fromJson(e as Map<String, dynamic>))
-          .toList();
+      return list.map((e) => KugouPlaylistBrief.fromJson(e as Map<String, dynamic>)).toList();
     } catch (e) {
             return null;
     }
@@ -393,7 +396,7 @@ class KugouApiClient {
       final data = json['data'] as Map<String, dynamic>? ?? json;
       return data['keyword']?.toString();
     } catch (e) {
-      return null;
+            return null;
     }
   }
 
@@ -405,71 +408,12 @@ class KugouApiClient {
       List<dynamic> list;
       if (data is List) {
         list = data;
-      } else if (data is Map) {
-        list = data['list'] ?? data['info'] ?? [];
+      } else if (data is Map<String, dynamic>) {
+        list = (data['list'] ?? data['info'] ?? []) as List<dynamic>;
       } else {
         list = [];
       }
-      return list
-          .map((e) {
-            if (e is String) return e;
-            final m = e as Map<String, dynamic>;
-            return (m['searchword'] ?? m['keyword'] ?? m['name'] ?? '')
-                .toString();
-          })
-          .where((e) => e.isNotEmpty)
-          .cast<String>()
-          .toList();
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<List<String>?> getSearchSuggest(String keywords) async {
-    final json = await _get(
-      KugouEndpoints.searchSuggest,
-      queryParameters: {'keywords': keywords},
-    );
-    if (json == null) return null;
-    try {
-      final data = json['data'];
-      List<dynamic> items = [];
-      if (data is List) {
-        for (final category in data) {
-          if (category is Map<String, dynamic>) {
-            final recordDatas = category['RecordDatas'];
-            if (recordDatas is List) {
-              for (final record in recordDatas) {
-                if (record is Map<String, dynamic>) {
-                  final hintInfo = record['HintInfo'];
-                  if (hintInfo is String && hintInfo.isNotEmpty) {
-                    items.add(hintInfo);
-                  } else if (hintInfo is Map<String, dynamic>) {
-                    final word =
-                        hintInfo['HintWords'] ?? hintInfo['keyword'] ?? '';
-                    if (word.toString().isNotEmpty) {
-                      items.add(word.toString());
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      } else if (data is Map) {
-        final list = data['list'] ?? data['info'] ?? [];
-        for (final e in list) {
-          if (e is String) {
-            items.add(e);
-          } else if (e is Map<String, dynamic>) {
-            final word = e['keyword'] ?? e['searchword'] ?? e['name'] ?? '';
-            if (word.toString().isNotEmpty) {
-              items.add(word.toString());
-            }
-          }
-        }
-      }
-      return items.cast<String>().toList();
+      return list.map((e) => e.toString()).toList();
     } catch (e) {
             return null;
     }
@@ -477,13 +421,18 @@ class KugouApiClient {
 
   // ==================== Song ====================
 
-  Map<String, dynamic> _extractData(dynamic rawData) {
-    if (rawData is Map<String, dynamic>) return rawData;
-    if (rawData is List && rawData.isNotEmpty) {
-      final first = rawData.first;
-      if (first is Map<String, dynamic>) return first;
+  Future<KugouSongDetail?> getSongDetail(String hash) async {
+    final json = await _get(
+      KugouEndpoints.songDetail,
+      queryParameters: {'hash': hash.toLowerCase()},
+    );
+    if (json == null) return null;
+    try {
+      final data = json['data'] as Map<String, dynamic>? ?? json;
+      return KugouSongDetail.fromJson(data);
+    } catch (e) {
+            return null;
     }
-    return {};
   }
 
   Future<KugouPlayUrl?> getSongUrl(
@@ -499,12 +448,13 @@ class KugouApiClient {
     if (albumId != null) params['album_id'] = albumId;
     if (albumAudioId != null) params['album_audio_id'] = albumAudioId;
 
-    // VIP 用户优先用 /song/url/new（→ /v6/priv_url），它会读取
-    // Authorization 头里的 vip_token，能拿到完整音质。
-    // 注意：如果 _getSongUrlNew 因为 priv_status=0 / fail_process 等
-    // 原因返回 null，说明酷狗没认 VIP。这种情况继续走 /song/url
-    // 也只会拿到 30s 试听片段，必须直接返回 null，让上层提示
-    // 用户 VIP 不生效或登录失效。
+    final json = await _get(
+      KugouEndpoints.songUrl,
+      queryParameters: params,
+    );
+    if (json == null) return null;
+
+    // 优先从 vip 接口取完整链接
     if (hasVipToken) {
       final vipUrl = await _getSongUrlNew(
         hash,
@@ -513,33 +463,37 @@ class KugouApiClient {
         albumAudioId: albumAudioId,
       );
       if (vipUrl != null) return vipUrl;
+    }
+
+    try {
+      final data = json['data'] as Map<String, dynamic>? ?? json;
+      return KugouPlayUrl.fromJson(data);
+    } catch (e) {
             return null;
     }
+  }
 
-    var json = await _get(KugouEndpoints.songUrl, queryParameters: params);
+  Future<KugouPlayUrl?> getSongUrlWithFallback(
+    String hash, {
+    String quality = KugouQuality.standard,
+    String? albumId,
+    String? albumAudioId,
+  }) async {
+    final params = <String, dynamic>{
+      'hash': hash.toLowerCase(),
+      'quality': quality,
+    };
+    if (albumId != null) params['album_id'] = albumId;
+    if (albumAudioId != null) params['album_audio_id'] = albumAudioId;
+
+    final json = await _get(
+      KugouEndpoints.songUrl,
+      queryParameters: params,
+    );
     if (json == null) return null;
 
-    var data = _extractData(json['data'] ?? json);
-    final errcode = data['errcode'];
-
-    if (errcode != null && errcode == 20028) {
-            await registerDevice();
-      if (_dfid == null) return null;
-
-      json = await _get(KugouEndpoints.songUrl, queryParameters: params);
-      if (json == null) return null;
-      data = _extractData(json['data'] ?? json);
-    }
-
-    final status = data['status'];
-    final errorCode = data['error_code'];
-    if (status == 2 &&
-        errorCode == 20018 &&
-        _token != null &&
-        _userid != null) {
-            final refreshed = await _tryRefreshToken();
-      if (refreshed) {
-        // refresh 后 vip_token 也会更新，重试 /song/url/new 一次
+    if (hasVipToken) {
+      try {
         if (hasVipToken) {
           final vipUrl = await _getSongUrlNew(
             hash,
@@ -549,64 +503,20 @@ class KugouApiClient {
           );
           if (vipUrl != null) return vipUrl;
         }
-        json = await _get(KugouEndpoints.songUrl, queryParameters: params);
-        if (json == null) return null;
-        data = _extractData(json['data'] ?? json);
-        if (data['url'] != null) {
-          return KugouPlayUrl.fromJson(data);
-        }
-      }
+      } catch (e) {
+              }
     }
 
     try {
-      if (data['url'] != null) {
-        return KugouPlayUrl.fromJson(data);
-      }
-
-      final failProcess = data['fail_process'];
-      if (failProcess is List &&
-          failProcess.contains('buy') &&
-          quality != KugouQuality.standard) {
-                params['quality'] = KugouQuality.standard;
-        json = await _get(KugouEndpoints.songUrl, queryParameters: params);
-        if (json != null) {
-          final fallbackData = _extractData(json['data'] ?? json);
-          if (fallbackData['url'] != null) {
-            return KugouPlayUrl.fromJson(fallbackData);
-          }
-        }
-      }
-
-      // VIP 用户不要再走 free_part=1 主动拉 30 秒试听。
-      // 试听只对未登录 / 没有 VIP 凭证的人兜底。
-      if (hasVipToken) {
-                return null;
-      }
-
-            final freeParams = Map<String, dynamic>.from(params);
-      freeParams['free_part'] = 1;
-      final freeJson = await _get(
-        KugouEndpoints.songUrl,
-        queryParameters: freeParams,
-      );
-      if (freeJson != null) {
-        final freeData = _extractData(freeJson['data'] ?? freeJson);
-        if (freeData['url'] != null) {
-          return KugouPlayUrl.fromJson(freeData);
-        }
-      }
-
-          } catch (e) {
-          }
-    return null;
+      final data = json['data'] as Map<String, dynamic>? ?? json;
+      return KugouPlayUrl.fromJson(data);
+    } catch (e) {
+            return null;
+    }
   }
 
-  /// /song/url/new 走的是 /v6/priv_url，服务端会读 cookie 里的 vip_token
-  /// 并作为 tracker_param.viptoken 上传给酷狗。返回结构通常为：
-  ///   { data: { url: [...], bitRate, priv_status, fail_process, ... } }
-  ///
-  /// 关键：必须检查 `priv_status`，0 表示酷狗没认 VIP，返回的是 30s/1min
-  /// 试听片段；`fail_process` 含 `buy` 时也是同样情况。这两种情况下
+  /// VIP 专属接口：获取完整播放链接（非试听片段）。
+  /// 与 getSongUrl 的区别：url 字段是完整链接，play_backup_url 也是完整链接。
   /// 即便 url 字段非空也不能直接拿来用，否则会播放到片段末尾就跳结束。
   Future<KugouPlayUrl?> _getSongUrlNew(
     String hash, {
@@ -620,139 +530,41 @@ class KugouApiClient {
     };
     if (albumId != null) query['album_id'] = albumId;
     if (albumAudioId != null) query['album_audio_id'] = albumAudioId;
-    try {
-      final json = await _get(
-        KugouEndpoints.songUrlNew,
-        queryParameters: query,
-      );
-      if (json == null) {
-                return null;
-      }
-      final data = _extractData(json['data'] ?? json);
-      final rawUrl = data['url'];
-      final hasUrl = rawUrl is List
-          ? rawUrl.isNotEmpty
-          : (rawUrl is String && rawUrl.isNotEmpty);
 
-      if (hasUrl) {
-        // 1) priv_status 显式标记 VIP 是否生效。
-        //    酷狗约定：1 = VIP 验证通过给完整音源，0 = 走试听/包月/购买。
-        final privStatus = _parseInt(data['priv_status']);
-        if (privStatus == 0) {
-                    return null;
-        }
-
-        // 2) fail_process 含 buy/pkg 时也是试听兜底，丢弃。
-        final failProcess = data['fail_process'];
-        if (failProcess is List && failProcess.isNotEmpty) {
-                    return null;
-        }
-
-        // 3) 用 fileSize 兜底识别：3~5 分钟的普通歌曲通常 > 2MB，
-        //    如果不到 200KB 几乎一定是 30s 试听片段。
-        final fileSize = _parseInt(data['fileSize'] ?? data['file_size']);
-        if (fileSize > 0 && fileSize < 200 * 1024) {
-                    return null;
-        }
-
-                return KugouPlayUrl.fromJson({...data, 'quality': quality});
-      }
-          } catch (e) {
-          }
-    return null;
-  }
-
-  int _parseInt(dynamic v) {
-    if (v is int) return v;
-    if (v is num) return v.toInt();
-    if (v is String) return int.tryParse(v) ?? 0;
-    return 0;
-  }
-
-  Future<List<KugouSongDetail>?> getRecommendSongs() async {
-    final json = await _get(KugouEndpoints.recommendSongs);
-    if (json == null) return null;
-    try {
-      final data = json['data'] as Map<String, dynamic>? ?? json;
-      final list =
-          data['song_list'] ??
-          data['songs'] ??
-          data['list'] ??
-          data['info'] ??
-          [];
-      return (list as List<dynamic>)
-          .map((e) => KugouSongDetail.fromJson(e as Map<String, dynamic>))
-          .toList();
-    } catch (e) {
-      return null;
-    }
-  }
-
-  Future<KugouSongDetail?> getSongDetail(String hash) async {
     final json = await _get(
-      KugouEndpoints.songDetail,
-      queryParameters: {'hash': hash},
+      KugouEndpoints.songUrlNew,
+      queryParameters: query,
     );
     if (json == null) return null;
+
     try {
-      final rawData = json['data'] ?? json;
-      Map<String, dynamic> data;
-      if (rawData is List && rawData.isNotEmpty) {
-        data = rawData.first as Map<String, dynamic>;
-      } else if (rawData is Map<String, dynamic>) {
-        data = rawData;
-      } else {
-        return null;
+      final data = json['data'] as Map<String, dynamic>? ?? json;
+      final url = data['url']?.toString();
+      final playUrl = data['play_url']?.toString();
+      final backupUrl = data['play_backup_url']?.toString();
+
+      // 优先取 url（完整链接），其次 play_url，最后 play_backup_url
+      final finalUrl = url ?? playUrl ?? backupUrl;
+      if (finalUrl == null || finalUrl.isEmpty) {
+                return null;
       }
-      return KugouSongDetail.fromJson(data);
+
+      return KugouPlayUrl(
+        url: finalUrl,
+        fileSize: _parseInt(data['fileSize'] ?? data['filesize'] ?? 0),
+        bitRate: _parseInt(data['bitRate'] ?? data['bitrate'] ?? 0),
+        quality: data['quality']?.toString() ?? quality,
+      );
     } catch (e) {
             return null;
     }
   }
 
-  Future<KugouSongClimax?> getSongClimax(
-    String hash, {
-    String? albumAudioId,
-  }) async {
-    final params = <String, dynamic>{'hash': hash};
-    if (albumAudioId != null) params['album_audio_id'] = albumAudioId;
-    final json = await _get(KugouEndpoints.songClimax, queryParameters: params);
-    if (json == null) return null;
-    try {
-      return KugouSongClimax.fromJson(json);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  Future<KugouSongRanking?> getSongRanking(String hash) async {
-    final json = await _get(
-      KugouEndpoints.songRanking,
-      queryParameters: {'hash': hash},
-    );
-    if (json == null) return null;
-    try {
-      return KugouSongRanking.fromJson(json);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  Future<List<KugouSongDetail>?> getAudioRelated(String hash) async {
-    final json = await _get(
-      KugouEndpoints.audioRelated,
-      queryParameters: {'hash': hash},
-    );
-    if (json == null) return null;
-    try {
-      final data = json['data'] as Map<String, dynamic>? ?? json;
-      final list = data['list'] ?? data['songs'] ?? data['info'] ?? [];
-      return (list as List<dynamic>)
-          .map((e) => KugouSongDetail.fromJson(e as Map<String, dynamic>))
-          .toList();
-    } catch (e) {
-      return null;
-    }
+  int _parseInt(dynamic v) {
+    if (v == null) return 0;
+    if (v is int) return v;
+    if (v is double) return v.toInt();
+    return int.tryParse(v.toString()) ?? 0;
   }
 
   // ==================== Lyric ====================
@@ -795,7 +607,7 @@ class KugouApiClient {
     }
 
     if (lyricId == null) {
-            return null;
+                  return null;
     }
 
     // 默认 fmt='lrc' 触发并发双请求（LRC + KRC）；显式传 fmt='krc' 走单请求路径（向后兼容）
@@ -911,1026 +723,19 @@ class KugouApiClient {
     );
     if (json == null) return null;
     try {
-      return KugouCommentList.fromJson(json);
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<KugouCommentList?> getCommentsByClassify(
-    String hash, {
-    String? classify,
-    int page = 1,
-    int pagesize = 20,
-  }) async {
-    final params = <String, dynamic>{
-      'hash': hash,
-      'page': page,
-      'pagesize': pagesize,
-    };
-    if (classify != null) params['classify'] = classify;
-    final json = await _get(
-      KugouEndpoints.commentMusicClassify,
-      queryParameters: params,
-    );
-    if (json == null) return null;
-    try {
-      return KugouCommentList.fromJson(json);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  Future<KugouCommentList?> getCommentsByHotword(
-    String hash, {
-    String? hotword,
-    int page = 1,
-  }) async {
-    final params = <String, dynamic>{'hash': hash, 'page': page};
-    if (hotword != null) params['hotword'] = hotword;
-    final json = await _get(
-      KugouEndpoints.commentMusicHotword,
-      queryParameters: params,
-    );
-    if (json == null) return null;
-    try {
-      return KugouCommentList.fromJson(json);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  Future<KugouCommentList?> getFloorComments(
-    String commentId, {
-    int page = 1,
-  }) async {
-    final json = await _get(
-      KugouEndpoints.commentFloor,
-      queryParameters: {'commentid': commentId, 'page': page},
-    );
-    if (json == null) return null;
-    try {
-      return KugouCommentList.fromJson(json);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  Future<KugouCommentList?> getPlaylistComments(
-    String specialId, {
-    int page = 1,
-  }) async {
-    final json = await _get(
-      KugouEndpoints.commentPlaylist,
-      queryParameters: {'specialid': specialId, 'page': page},
-    );
-    if (json == null) return null;
-    try {
-      return KugouCommentList.fromJson(json);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  Future<KugouCommentList?> getAlbumComments(
-    String albumId, {
-    int page = 1,
-  }) async {
-    final json = await _get(
-      KugouEndpoints.commentAlbum,
-      queryParameters: {'album_id': albumId, 'page': page},
-    );
-    if (json == null) return null;
-    try {
-      return KugouCommentList.fromJson(json);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  // ==================== Playlist ====================
-
-  Future<KugouPlaylistCategory?> getPlaylist({
-    String? categoryId,
-    int page = 1,
-  }) async {
-    final params = <String, dynamic>{'page': page};
-    if (categoryId != null) params['category_id'] = categoryId;
-
-    final json = await _get(
-      KugouEndpoints.topPlaylist,
-      queryParameters: params,
-    );
-    if (json == null) return null;
-    try {
-      return KugouPlaylistCategory.fromJson(json);
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<List<KugouPlaylistBrief>?> getPlaylistDetail(String ids) async {
-    final json = await _post(KugouEndpoints.playlistDetail, data: {'ids': ids});
-    if (json == null) return null;
-    try {
-      final data = json['data'];
-      if (data is List) {
-        return data
-            .map((e) => KugouPlaylistBrief.fromJson(e as Map<String, dynamic>))
-            .toList();
-      }
-      return [];
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<KugouPlaylistSongs?> getPlaylistSongs(
-    String globalCollectionId, {
-    int page = 1,
-    int pagesize = 30,
-    bool noCache = false,
-  }) async {
-    final params = <String, dynamic>{
-      'global_collection_id': globalCollectionId,
-      'page': page,
-      'pagesize': pagesize,
-    };
-    final json = await _get(
-      KugouEndpoints.playlistTrackAll,
-      queryParameters: params,
-      noCache: noCache,
-    );
-    if (json == null) return null;
-    try {
-      return KugouPlaylistSongs.fromJson(json);
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<KugouPlaylistSongs?> getPlaylistSongsByListid({
-    required String listid,
-    int page = 1,
-    int pagesize = 30,
-    bool noCache = false,
-  }) async {
-    final params = <String, dynamic>{
-      'listid': listid,
-      'page': page,
-      'pagesize': pagesize,
-    };
-    final json = await _get(
-      KugouEndpoints.playlistTrackAllNew,
-      queryParameters: params,
-      noCache: noCache,
-    );
-    if (json == null) return null;
-    try {
-      return KugouPlaylistSongs.fromJson(json);
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<Map<String, dynamic>?> getPlaylistSimilar(String id) async {
-    return await _get(
-      KugouEndpoints.playlistSimilar,
-      queryParameters: {'id': id},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getPlaylistEffect() async {
-    return await _get(KugouEndpoints.playlistEffect);
-  }
-
-  Future<Map<String, dynamic>?> getPlaylistTags() async {
-    return await _get(KugouEndpoints.playlistTags);
-  }
-
-  // ==================== Sheet ====================
-
-  Future<Map<String, dynamic>?> getSheetExplore({int page = 1}) async {
-    return await _get(
-      KugouEndpoints.sheetExplore,
-      queryParameters: {'page': page},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getSheetDetail(String id) async {
-    return await _get(KugouEndpoints.sheetDetail, queryParameters: {'id': id});
-  }
-
-  Future<Map<String, dynamic>?> getSheetSong(String id) async {
-    return await _get(KugouEndpoints.sheetSong, queryParameters: {'id': id});
-  }
-
-  Future<Map<String, dynamic>?> getSheetTags() async {
-    return await _get(KugouEndpoints.sheetTags);
-  }
-
-  // ==================== Theme ====================
-
-  Future<Map<String, dynamic>?> getThemeMusic() async {
-    return await _get(KugouEndpoints.themeMusic);
-  }
-
-  Future<Map<String, dynamic>?> getThemeMusicDetail(String id) async {
-    return await _get(
-      KugouEndpoints.themeMusicDetail,
-      queryParameters: {'id': id},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getThemePlaylist() async {
-    return await _get(KugouEndpoints.themePlaylist);
-  }
-
-  Future<Map<String, dynamic>?> getThemePlaylistTrack(String id) async {
-    return await _get(
-      KugouEndpoints.themePlaylistTrack,
-      queryParameters: {'id': id},
-    );
-  }
-
-  // ==================== Rank ====================
-
-  Future<KugouRankList?> getRankList({int withsong = 1}) async {
-    final json = await _get(
-      KugouEndpoints.rankList,
-      queryParameters: {'withsong': withsong},
-    );
-    if (json == null) return null;
-    try {
-      return KugouRankList.fromJson(json);
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<Map<String, dynamic>?> getRankTop() async {
-    return await _get(KugouEndpoints.rankTop);
-  }
-
-  Future<Map<String, dynamic>?> getRankVol(String rankId) async {
-    return await _get(
-      KugouEndpoints.rankVol,
-      queryParameters: {'rankid': rankId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getRankInfo(String rankId) async {
-    return await _get(
-      KugouEndpoints.rankInfo,
-      queryParameters: {'rankid': rankId},
-    );
-  }
-
-  Future<List<KugouSongDetail>?> getRankAudio({
-    required String rankId,
-    int rankCid = 0,
-    int page = 1,
-    int pagesize = 30,
-  }) async {
-    final json = await _get(
-      KugouEndpoints.rankAudio,
-      queryParameters: {
-        'rankid': rankId,
-        'rank_cid': rankCid,
-        'page': page,
-        'pagesize': pagesize,
-      },
-    );
-    if (json == null) return null;
-    try {
       final data = json['data'] as Map<String, dynamic>? ?? json;
-      final list =
-          data['songlist'] ??
-          data['list'] ??
-          data['songs'] ??
-          data['info'] ??
-          [];
-      return (list as List<dynamic>)
-          .map((e) => KugouSongDetail.fromJson(e as Map<String, dynamic>))
-          .toList();
+      return KugouCommentList.fromJson(data);
     } catch (e) {
             return null;
     }
   }
 
-  // ==================== Everyday ====================
-
-  Future<List<KugouSongDetail>?> getRecommendDaily() async {
-    final json = await _get(KugouEndpoints.everydayRecommend);
-    if (json == null) return null;
-    try {
-      final data = json['data'] as Map<String, dynamic>? ?? json;
-      final list =
-          data['song_list'] ??
-          data['songs'] ??
-          data['list'] ??
-          data['info'] ??
-          [];
-      return (list as List<dynamic>)
-          .map((e) => KugouSongDetail.fromJson(e as Map<String, dynamic>))
-          .toList();
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<Map<String, dynamic>?> getEverydayHistory() async {
-    return await _get(KugouEndpoints.everydayHistory);
-  }
-
-  Future<Map<String, dynamic>?> getEverydayStyleRecommend() async {
-    return await _get(KugouEndpoints.everydayStyleRecommend);
-  }
-
-  // ==================== Top ====================
-
-  Future<Map<String, dynamic>?> getTopAlbum({int page = 1}) async {
-    return await _get(KugouEndpoints.topAlbum, queryParameters: {'page': page});
-  }
-
-  Future<Map<String, dynamic>?> getTopSong({int page = 1}) async {
-    return await _get(KugouEndpoints.topSong, queryParameters: {'page': page});
-  }
-
-  // ==================== Yueku ====================
-
-  Future<Map<String, dynamic>?> getYueku() async {
-    return await _get(KugouEndpoints.yueku);
-  }
-
-  Future<Map<String, dynamic>?> getYuekuBanner() async {
-    return await _get(KugouEndpoints.yuekuBanner);
-  }
-
-  Future<Map<String, dynamic>?> getYuekuFm() async {
-    return await _get(KugouEndpoints.yuekuFm);
-  }
-
-  // ==================== IP (Edit Picks) ====================
-
-  Future<Map<String, dynamic>?> getIpHome() async {
-    return await _get(KugouEndpoints.ipHome);
-  }
-
-  Future<Map<String, dynamic>?> getIpDateil() async {
-    return await _get(KugouEndpoints.ipDateil);
-  }
-
-  Future<Map<String, dynamic>?> getIpPlaylist() async {
-    return await _get(KugouEndpoints.ipPlaylist);
-  }
-
-  Future<Map<String, dynamic>?> getIpZone() async {
-    return await _get(KugouEndpoints.ipZone);
-  }
-
-  Future<Map<String, dynamic>?> getIpZoneHome(String zoneId) async {
-    return await _get(
-      KugouEndpoints.ipZoneHome,
-      queryParameters: {'zone_id': zoneId},
-    );
-  }
-
-  // ==================== FM (Radio) ====================
-
-  Future<Map<String, dynamic>?> getFmRecommend() async {
-    return await _get(KugouEndpoints.fmRecommend);
-  }
-
-  Future<Map<String, dynamic>?> getFmClass() async {
-    return await _get(KugouEndpoints.fmClass);
-  }
-
-  Future<Map<String, dynamic>?> getFmImage() async {
-    return await _get(KugouEndpoints.fmImage);
-  }
-
-  Future<Map<String, dynamic>?> getFmSongs(String fmId) async {
-    return await _get(KugouEndpoints.fmSongs, queryParameters: {'id': fmId});
-  }
-
-  // ==================== Personal FM ====================
-
-  Future<List<KugouSongDetail>?> getPersonalFm({
-    String? mode,
-    int? songPoolId,
-    String? hash,
-    String? songId,
-    String? action,
-  }) async {
-    final params = <String, dynamic>{};
-    if (mode != null) params['mode'] = mode;
-    if (songPoolId != null) params['song_pool_id'] = songPoolId.toString();
-    if (hash != null) params['hash'] = hash;
-    if (songId != null) params['songid'] = songId;
-    if (action != null) params['action'] = action;
-
-    final json = await _get(KugouEndpoints.personalFm, queryParameters: params);
-    if (json == null) return null;
-    try {
-      final data = json['data'] as Map<String, dynamic>? ?? json;
-      final list =
-          data['song_list'] ??
-          data['songs'] ??
-          data['list'] ??
-          data['info'] ??
-          [];
-      return (list as List<dynamic>)
-          .map((e) => KugouSongDetail.fromJson(e as Map<String, dynamic>))
-          .toList();
-    } catch (e) {
-            return null;
-    }
-  }
-
-  // ==================== Scene ====================
-
-  Future<Map<String, dynamic>?> getSceneLists() async {
-    return await _get(KugouEndpoints.sceneLists);
-  }
-
-  Future<Map<String, dynamic>?> getSceneMusic() async {
-    return await _get(KugouEndpoints.sceneMusic);
-  }
-
-  Future<Map<String, dynamic>?> getSceneModule(String moduleId) async {
-    return await _get(
-      KugouEndpoints.sceneModule,
-      queryParameters: {'id': moduleId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getSceneModuleInfo(String moduleId) async {
-    return await _get(
-      KugouEndpoints.sceneModuleInfo,
-      queryParameters: {'id': moduleId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getSceneCollectionList(String moduleId) async {
-    return await _get(
-      KugouEndpoints.sceneCollectionList,
-      queryParameters: {'id': moduleId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getSceneVideoList(String moduleId) async {
-    return await _get(
-      KugouEndpoints.sceneVideoList,
-      queryParameters: {'id': moduleId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getSceneAudioList(
-    String moduleId, {
-    String? collectionId,
-  }) async {
-    final params = <String, dynamic>{'id': moduleId};
-    if (collectionId != null) params['collection_id'] = collectionId;
-    return await _get(KugouEndpoints.sceneAudioList, queryParameters: params);
-  }
-
-  // ==================== Artist ====================
-
-  Future<Map<String, dynamic>?> getSingerList({int page = 1}) async {
-    return await _get(
-      KugouEndpoints.singerList,
-      queryParameters: {'page': page},
-    );
-  }
-
-  Future<KugouArtistDetail?> getArtistDetail(String artistId) async {
-    final json = await _get(
-      KugouEndpoints.artistDetail,
-      queryParameters: {'singerid': artistId},
-    );
-    if (json == null) return null;
-    try {
-      final data = json['data'] as Map<String, dynamic>? ?? json;
-      return KugouArtistDetail.fromJson(data);
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<KugouArtistAlbums?> getArtistAlbums(
-    String artistId, {
-    int page = 1,
-    int pagesize = 30,
-  }) async {
-    final json = await _get(
-      KugouEndpoints.artistAlbums,
-      queryParameters: {
-        'singerid': artistId,
-        'page': page,
-        'pagesize': pagesize,
-      },
-    );
-    if (json == null) return null;
-    try {
-      return KugouArtistAlbums.fromJson(json);
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<KugouArtistAudios?> getArtistAudios(
-    String artistId, {
-    int page = 1,
-    int pagesize = 30,
-  }) async {
-    final json = await _get(
-      KugouEndpoints.artistAudios,
-      queryParameters: {
-        'singerid': artistId,
-        'page': page,
-        'pagesize': pagesize,
-      },
-    );
-    if (json == null) return null;
-    try {
-      return KugouArtistAudios.fromJson(json);
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<Map<String, dynamic>?> getArtistVideos(String artistId) async {
-    return await _get(
-      KugouEndpoints.artistVideos,
-      queryParameters: {'singerid': artistId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> followArtist(String artistId) async {
-    return await _post(
-      KugouEndpoints.artistFollow,
-      data: {'singerid': artistId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> unfollowArtist(String artistId) async {
-    return await _post(
-      KugouEndpoints.artistUnfollow,
-      data: {'singerid': artistId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getFollowNewsongs() async {
-    return await _get(KugouEndpoints.artistFollowNewsongs);
-  }
-
-  // ==================== Login ====================
-
-  Future<Map<String, dynamic>?> loginByCellphone(
-    String mobile,
-    String code, {
-    String? userid,
-  }) async {
-    final params = <String, dynamic>{'mobile': mobile, 'code': code};
-    if (userid != null) params['userid'] = userid;
-    return await _get(KugouEndpoints.loginCellphone, queryParameters: params);
-  }
-
-  Future<Map<String, dynamic>?> loginByUsername(
-    String username,
-    String password,
-  ) async {
-    return await _get(
-      KugouEndpoints.login,
-      queryParameters: {'username': username, 'password': password},
-    );
-  }
-
-  Future<KugouQrKey?> getLoginQrKey() async {
-    final json = await _get(
-      KugouEndpoints.loginQrKey,
-      queryParameters: {
-        'timestamp': DateTime.now().millisecondsSinceEpoch.toString(),
-      },
-    );
-    if (json == null) return null;
-    try {
-      final data = json['data'] as Map<String, dynamic>? ?? json;
-      return KugouQrKey.fromJson(data);
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<KugouQrCreate?> createLoginQr(String key) async {
-    final json = await _get(
-      KugouEndpoints.loginQrCreate,
-      queryParameters: {
-        'key': key,
-        'qrimg': 'true',
-        'timestamp': DateTime.now().millisecondsSinceEpoch.toString(),
-      },
-    );
-    if (json == null) return null;
-    try {
-      final data = json['data'] as Map<String, dynamic>? ?? json;
-      return KugouQrCreate.fromJson(data);
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<KugouQrCheck?> checkLoginQr(String key) async {
-    final json = await _get(
-      KugouEndpoints.loginQrCheck,
-      queryParameters: {
-        'key': key,
-        'timestamp': DateTime.now().millisecondsSinceEpoch.toString(),
-      },
-    );
-    if (json == null) return null;
-    try {
-            return KugouQrCheck.fromJson(json);
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<Map<String, dynamic>?> refreshLogin({
-    String? token,
-    String? userid,
-  }) async {
-    final params = <String, dynamic>{};
-    if (token != null) params['token'] = token;
-    if (userid != null) params['userid'] = userid;
-    return await _get(KugouEndpoints.loginToken, queryParameters: params);
-  }
-
-  // 发送手机验证码
-  Future<Map<String, dynamic>?> sendLoginCaptcha(String mobile) async {
-    return await _get(
-      KugouEndpoints.captchaSent,
-      queryParameters: {'mobile': mobile},
-    );
-  }
-
-  // 开放平台登录 (微信 code 换取酷狗 token)
-  Future<Map<String, dynamic>?> loginByOpenplat(String code) async {
-    return await _get(
-      KugouEndpoints.loginOpenplat,
-      queryParameters: {'code': code},
-    );
-  }
-
-  // 微信扫码 - 生成 uuid + 二维码
-  Future<Map<String, dynamic>?> createLoginWx() async {
-    return await _get(KugouEndpoints.loginWxCreate);
-  }
-
-  // 微信扫码 - 轮询状态
-  Future<Map<String, dynamic>?> checkLoginWx(String uuid) async {
-    return await _get(
-      KugouEndpoints.loginWxCheck,
-      queryParameters: {
-        'uuid': uuid,
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
-      },
-    );
-  }
-
-  Future<bool> _tryRefreshToken() async {
-    if (_token == null || _userid == null) return false;
-    try {
-            final result = await refreshLogin(token: _token, userid: _userid);
-      if (result == null) {
-                return false;
-      }
-      final status = result['status'];
-      final data = result['data'] as Map<String, dynamic>?;
-      if (status == 1 && data != null) {
-        final newToken = data['token']?.toString();
-        final newUserid = data['userid']?.toString();
-        final newVipToken = data['vip_token']?.toString();
-        if (newToken != null && newUserid != null) {
-          await setLoginCookies(newToken, newUserid, vipToken: newVipToken);
-                    return true;
-        }
-      }
-            return false;
-    } catch (e) {
-            return false;
-    }
-  }
-
-  Future<Map<String, dynamic>?> sendCaptcha(String mobile) async {
-    return await _get(
-      KugouEndpoints.captchaSent,
-      queryParameters: {'mobile': mobile},
-    );
-  }
-
-  // ==================== User ====================
-
-  Future<KugouUserDetail?> getUserDetail() async {
-    final json = await _get(KugouEndpoints.userDetail);
-    if (json == null) return null;
-    try {
-      return KugouUserDetail.fromJson(json);
-    } catch (e) {
-            return null;
-    }
-  }
-
-  Future<KugouUserVipDetail?> getUserVipDetail() async {
-    final json = await _get(KugouEndpoints.userVipDetail);
-    if (json == null) return null;
-    try {
-      return KugouUserVipDetail.fromJson(json);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  Future<Map<String, dynamic>?> getUserPlaylist({
-    int page = 1,
-    int pagesize = 30,
-    int? type, // 0=歌单, 1=专辑
-    bool noCache = false,
-  }) async {
-    final params = <String, dynamic>{
-      'page': page,
-      'pagesize': pagesize,
-      if (isLoggedIn && userid != null) 'userid': userid!,
-    };
-    if (type != null) params['type'] = type;
-    return await _get(
-      KugouEndpoints.userPlaylist,
-      queryParameters: params,
-      noCache: noCache,
-    );
-  }
-
-  Future<Map<String, dynamic>?> getUserFollow() async {
-    return await _get(KugouEndpoints.userFollow);
-  }
-
-  Future<Map<String, dynamic>?> getUserFollowMessage(
-    String userId, {
-    int pagesize = 30,
-  }) async {
-    return await _get(
-      KugouEndpoints.userFollowMessage,
-      queryParameters: {'id': userId, 'pagesize': pagesize},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getUserCloudUrl(
-    String hash, {
-    String? albumId,
-    String? name,
-    String? albumAudioId,
-  }) async {
-    final params = <String, dynamic>{'hash': hash};
-    if (albumId != null) params['album_id'] = albumId;
-    if (name != null) params['name'] = name;
-    if (albumAudioId != null) params['album_audio_id'] = albumAudioId;
-    return await _get(KugouEndpoints.userCloudUrl, queryParameters: params);
-  }
-
-  Future<Map<String, dynamic>?> getUserVideoCollect({
-    int page = 1,
-    int pagesize = 30,
-  }) async {
-    return await _get(
-      KugouEndpoints.userVideoCollect,
-      queryParameters: {'page': page, 'pagesize': pagesize},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getUserVideoLove({int pagesize = 30}) async {
-    return await _get(
-      KugouEndpoints.userVideoLove,
-      queryParameters: {'pagesize': pagesize},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getUserListen({int type = 0}) async {
-    return await _get(
-      KugouEndpoints.userListen,
-      queryParameters: {'type': type},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getUserHistory() async {
-    return await _get(KugouEndpoints.userHistory);
-  }
-
-  Future<Map<String, dynamic>?> uploadPlayHistory(
-    String hash,
-    String songName, {
-    String? albumAudioId,
-  }) async {
-    final params = <String, dynamic>{
-      'hash': hash,
-      'songname': songName,
-    };
-    if (albumAudioId != null) params['album_audio_id'] = albumAudioId;
-    return await _get(
-      KugouEndpoints.playhistoryUpload,
-      queryParameters: params,
-    );
-  }
-
-  // ==================== Playlist Management ====================
-
-  Future<Map<String, dynamic>?> createPlaylist(
-    String name, {
-    int type = 0,
-    int isPri = 0,
-    String? listCreateUserid,
-    String? listCreateListid,
-    String? globalCollectionId,
-  }) async {
-    String userid = listCreateUserid ?? _userid ?? '0';
-    String listid = listCreateListid ?? '0';
-
-    if (globalCollectionId != null && globalCollectionId.isNotEmpty) {
-      final parts = globalCollectionId.split('_');
-      if (parts.length >= 4) {
-        userid = parts[2];
-        listid = parts[3];
-      }
-    }
-
-    final params = <String, dynamic>{
-      'name': name,
-      'type': type,
-      'is_pri': isPri,
-      'list_create_userid': userid,
-      'list_create_listid': listid,
-    };
-    return await _get(KugouEndpoints.playlistAdd, queryParameters: params);
-  }
-
-  Future<Map<String, dynamic>?> deletePlaylist(String listid, {int type = 1}) async {
-    return await _get(
-      KugouEndpoints.playlistDel,
-      queryParameters: {'listid': listid, 'type': type},
-    );
-  }
-
-  Future<Map<String, dynamic>?> addPlaylistTracks(
-    String listid,
-    String data,
-  ) async {
-    return await _get(
-      KugouEndpoints.playlistTracksAdd,
-      queryParameters: {'listid': listid, 'data': data},
-    );
-  }
-
-  Future<Map<String, dynamic>?> deletePlaylistTracks(
-    String listid,
-    String fileids,
-  ) async {
-    return await _get(
-      KugouEndpoints.playlistTracksDel,
-      queryParameters: {'listid': listid, 'fileids': fileids},
-    );
-  }
-
-  Future<Map<String, dynamic>?> collectSheet(String specialId) async {
-    return await _post(
-      KugouEndpoints.sheetCollection,
-      data: {'specialid': specialId},
-    );
-  }
-
-  // ==================== Video ====================
-
-  Future<Map<String, dynamic>?> getVideoUrl(String hash) async {
-    return await _get(KugouEndpoints.videoUrl, queryParameters: {'hash': hash});
-  }
-
-  Future<Map<String, dynamic>?> getVideoDetail(String hash) async {
-    return await _get(
-      KugouEndpoints.videoDetail,
-      queryParameters: {'hash': hash},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getVideoPrivilege(String hash) async {
-    return await _get(
-      KugouEndpoints.videoPrivilege,
-      queryParameters: {'hash': hash},
-    );
-  }
-
-  // ==================== Youth Channel ====================
-
-  Future<Map<String, dynamic>?> getYouthChannels() async {
-    return await _get(KugouEndpoints.youthChannelAll);
-  }
-
-  Future<Map<String, dynamic>?> getYouthChannelDetail(String channelId) async {
-    return await _get(
-      KugouEndpoints.youthChannelDetail,
-      queryParameters: {'id': channelId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getYouthChannelAmway() async {
-    return await _get(KugouEndpoints.youthChannelAmway);
-  }
-
-  Future<Map<String, dynamic>?> getYouthChannelSimilar(String channelId) async {
-    return await _get(
-      KugouEndpoints.youthChannelSimilar,
-      queryParameters: {'channelid': channelId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> subscribeYouthChannel(String channelId) async {
-    return await _get(
-      KugouEndpoints.youthChannelSub,
-      queryParameters: {'channelid': channelId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getYouthChannelSong(String channelId) async {
-    return await _get(
-      KugouEndpoints.youthChannelSong,
-      queryParameters: {'channelid': channelId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getYouthChannelSongDetail(
-    String channelId,
-  ) async {
-    return await _get(
-      KugouEndpoints.youthChannelSongDetail,
-      queryParameters: {'id': channelId},
-    );
-  }
-
-  // ==================== Long Audio ====================
-
-  Future<Map<String, dynamic>?> getLongaudioDaily() async {
-    return await _get(KugouEndpoints.longaudioDailyRecommend);
-  }
-
-  Future<Map<String, dynamic>?> getLongaudioRank() async {
-    return await _get(KugouEndpoints.longaudioRankRecommend);
-  }
-
-  Future<Map<String, dynamic>?> getLongaudioVip() async {
-    return await _get(KugouEndpoints.longaudioVipRecommend);
-  }
-
-  Future<Map<String, dynamic>?> getLongaudioWeek() async {
-    return await _get(KugouEndpoints.longaudioWeekRecommend);
-  }
-
-  Future<Map<String, dynamic>?> getLongaudioAlbumDetail(String albumId) async {
-    return await _get(
-      KugouEndpoints.longaudioAlbumDetail,
-      queryParameters: {'album_id': albumId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getLongaudioAlbumAudios(String albumId) async {
-    return await _get(
-      KugouEndpoints.longaudioAlbumAudios,
-      queryParameters: {'album_id': albumId},
-    );
-  }
-
-  // ==================== Other ====================
-
-  Future<Map<String, dynamic>?> getBrush() async {
-    return await _get(KugouEndpoints.brush);
-  }
-
-  Future<Map<String, dynamic>?> getAiRecommend() async {
-    return await _get(KugouEndpoints.aiRecommend);
-  }
-
-  Future<Map<String, dynamic>?> getServerNow() async {
-    return await _get(KugouEndpoints.serverNow);
-  }
-
-  Future<Map<String, dynamic>?> getAlbumInfo(String albumId) async {
-    return await _get(
-      KugouEndpoints.albumInfo,
-      queryParameters: {'album_id': albumId},
-    );
-  }
+  // ==================== Album ====================
 
   Future<KugouAlbumDetail?> getAlbumDetail(String albumId) async {
     final json = await _get(
       KugouEndpoints.albumDetail,
-      queryParameters: {'album_id': albumId},
+      queryParameters: {'albumid': albumId},
     );
     if (json == null) return null;
     try {
@@ -1941,219 +746,563 @@ class KugouApiClient {
     }
   }
 
-  Future<KugouAlbumSongs?> getAlbumSongs(
-    String albumId, {
-    int page = 1,
-    int pagesize = 30,
-  }) async {
+  Future<List<KugouAlbumBrief>?> getNewAlbums({int page = 1, int pagesize = 20}) async {
     final json = await _get(
-      KugouEndpoints.albumSongs,
-      queryParameters: {
-        'album_id': albumId,
-        'page': page,
-        'pagesize': pagesize,
-      },
+      KugouEndpoints.albumList,
+      queryParameters: {'page': page, 'pagesize': pagesize},
     );
     if (json == null) return null;
     try {
-      return KugouAlbumSongs.fromJson(json);
+      final data = json['data'];
+      List<dynamic> list;
+      if (data is List) {
+        list = data;
+      } else if (data is Map<String, dynamic>) {
+        list = (data['list'] ?? data['info'] ?? []) as List<dynamic>;
+      } else {
+        list = [];
+      }
+      return list.map((e) => KugouAlbumBrief.fromJson(e as Map<String, dynamic>)).toList();
     } catch (e) {
             return null;
     }
   }
 
-  Future<List<KugouSongDetail>?> getPlaylistTrackAll({
-    required String id,
-    int page = 1,
-    int pagesize = 30,
-  }) async {
-    final params = <String, dynamic>{
-      'global_collection_id': id,
-      'page': page,
-      'pagesize': pagesize,
-    };
+  // ==================== Artist ====================
+
+  Future<KugouArtistDetail?> getArtistDetail(String artistId) async {
     final json = await _get(
-      KugouEndpoints.playlistTrackAll,
-      queryParameters: params,
+      KugouEndpoints.artistDetail,
+      queryParameters: {'artistid': artistId},
     );
     if (json == null) return null;
     try {
       final data = json['data'] as Map<String, dynamic>? ?? json;
-      final list = data['list'] ?? data['songs'] ?? data['info'] ?? [];
-      return (list as List<dynamic>)
-          .map((e) => KugouSongDetail.fromJson(e as Map<String, dynamic>))
+      return KugouArtistDetail.fromJson(data);
+    } catch (e) {
+            return null;
+    }
+  }
+
+  Future<List<Song>?> getArtistSongs(String artistId, {int page = 1, int pagesize = 30}) async {
+    final json = await _get(
+      KugouEndpoints.artistSongs,
+      queryParameters: {'artistid': artistId, 'page': page, 'pagesize': pagesize},
+    );
+    if (json == null) return null;
+    try {
+      final data = json['data'] as Map<String, dynamic>?;
+      if (data == null) return null;
+      final list = (data['list'] ?? data['songs'] ?? []) as List<dynamic>;
+      return list
+          .map((e) {
+            try {
+              return KugouSongDetail.fromJson(e as Map<String, dynamic>).toSong();
+            } catch (_) {
+              return null;
+            }
+          })
+          .where((s) => s != null)
+          .cast<Song>()
           .toList();
     } catch (e) {
             return null;
     }
   }
 
-  Future<List<KugouSongDetail>?> getPlaylistTrackAllNew({
-    required String listid,
-    int page = 1,
-    int pagesize = 30,
-  }) async {
+  // ==================== Playlist / Sheet ====================
+
+  Future<KugouPlaylistDetail?> getPlaylistDetail(String specialId) async {
     final json = await _get(
-      KugouEndpoints.playlistTrackAllNew,
-      queryParameters: {
-        'listid': listid,
-        'page': page,
-        'pagesize': pagesize,
-      },
+      KugouEndpoints.playlistDetail,
+      queryParameters: {'specialid': specialId},
     );
     if (json == null) return null;
     try {
       final data = json['data'] as Map<String, dynamic>? ?? json;
-      final list = data['list'] ?? data['songs'] ?? data['info'] ?? [];
-      return (list as List<dynamic>)
-          .map((e) => KugouSongDetail.fromJson(e as Map<String, dynamic>))
-          .toList();
+      return KugouPlaylistDetail.fromJson(data);
     } catch (e) {
             return null;
     }
   }
 
-  Future<List<KugouSongDetail>?> getLastestSongsListen() async {
-    final json = await _get(KugouEndpoints.lastestSongsListen);
+  Future<List<KugouPlaylistBrief>?> getRecommendPlaylists({int page = 1, int pagesize = 20}) async {
+    final json = await _get(
+      KugouEndpoints.playlistRecommend,
+      queryParameters: {'page': page, 'pagesize': pagesize},
+    );
+    if (json == null) return null;
+    try {
+      final data = json['data'];
+      List<dynamic> list;
+      if (data is List) {
+        list = data;
+      } else if (data is Map<String, dynamic>) {
+        list = (data['list'] ?? data['info'] ?? []) as List<dynamic>;
+      } else {
+        list = [];
+      }
+      return list.map((e) => KugouPlaylistBrief.fromJson(e as Map<String, dynamic>)).toList();
+    } catch (e) {
+            return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> getSheetDetail(String id) async {
+    return await _get(KugouEndpoints.sheetDetail, queryParameters: {'id': id});
+  }
+
+  // ==================== Rank ====================
+
+  Future<List<KugouPlaylistBrief>?> getRankList() async {
+    final json = await _get(KugouEndpoints.rankList);
+    if (json == null) return null;
+    try {
+      final data = json['data'];
+      List<dynamic> list;
+      if (data is List) {
+        list = data;
+      } else if (data is Map<String, dynamic>) {
+        list = (data['list'] ?? data['info'] ?? []) as List<dynamic>;
+      } else {
+        list = [];
+      }
+      return list.map((e) {
+        try {
+          return KugouPlaylistBrief.fromJson(e as Map<String, dynamic>);
+        } catch (_) {
+          return null;
+        }
+      }).where((p) => p != null).cast<KugouPlaylistBrief>().toList();
+    } catch (e) {
+            return null;
+    }
+  }
+
+  Future<KugouPlaylistDetail?> getRankDetail(String rankId, {int page = 1, int pagesize = 30}) async {
+    final json = await _get(
+      KugouEndpoints.rankInfo,
+      queryParameters: {'rankid': rankId, 'page': page, 'pagesize': pagesize},
+    );
     if (json == null) return null;
     try {
       final data = json['data'] as Map<String, dynamic>? ?? json;
-      final list = data['list'] ?? data['songs'] ?? data['info'] ?? [];
-      return (list as List<dynamic>)
-          .map((e) => KugouSongDetail.fromJson(e as Map<String, dynamic>))
-          .toList();
+      return KugouPlaylistDetail.fromJson(data);
     } catch (e) {
-      return null;
+            return null;
     }
   }
 
-  Future<Map<String, dynamic>?> getYouthListenSong() async {
-    return await _get(KugouEndpoints.youthListenSong);
-  }
+  // ==================== Collection ====================
 
-  Future<Map<String, dynamic>?> getYouthUserSong(String userId) async {
-    return await _get(
-      KugouEndpoints.youthUserSong,
-      queryParameters: {'userid': userId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getYouthDynamic() async {
-    return await _get(KugouEndpoints.youthDynamic);
-  }
-
-  Future<Map<String, dynamic>?> getYouthDynamicRecent() async {
-    return await _get(KugouEndpoints.youthDynamicRecent);
-  }
-
-  Future<Map<String, dynamic>?> getPrivilegeLite(String hash) async {
-    return await _get(
-      KugouEndpoints.privilegeLite,
-      queryParameters: {'hash': hash},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getAlbumShop(String albumId) async {
-    return await _get(
-      KugouEndpoints.albumShop,
-      queryParameters: {'album_id': albumId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getArtistLists(String artistId) async {
-    return await _get(
-      KugouEndpoints.artistLists,
-      queryParameters: {'singerid': artistId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getArtistHonour(String artistId) async {
-    return await _get(
-      KugouEndpoints.artistHonour,
-      queryParameters: {'singerid': artistId},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getPcDiantai() async {
-    return await _get(KugouEndpoints.pcDiantai);
-  }
-
-  Future<Map<String, dynamic>?> getImages(String hash) async {
-    return await _get(KugouEndpoints.images, queryParameters: {'hash': hash});
-  }
-
-  Future<Map<String, dynamic>?> getImagesAudio(String hash) async {
-    return await _get(
-      KugouEndpoints.imagesAudio,
-      queryParameters: {'hash': hash},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getKrmAudio(String hash) async {
-    return await _get(KugouEndpoints.krmAudio, queryParameters: {'hash': hash});
-  }
-
-  Future<Map<String, dynamic>?> getKmrAudioMv(String hash) async {
-    return await _get(
-      KugouEndpoints.kmrAudioMv,
-      queryParameters: {'hash': hash},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getAudioAccompany(String hash) async {
-    return await _get(
-      KugouEndpoints.audioAccompany,
-      queryParameters: {'hash': hash},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getAudioKtvTotal(String hash) async {
-    return await _get(
-      KugouEndpoints.audioKtvTotal,
-      queryParameters: {'hash': hash},
-    );
-  }
-
-  Future<Map<String, dynamic>?> getYouthVip() async {
-    return await _get(KugouEndpoints.youthVip);
-  }
-
-  Future<Map<String, dynamic>?> getYouthUnionVip() async {
-    return await _get(KugouEndpoints.youthUnionVip);
-  }
-
-  Future<Map<String, dynamic>?> claimDayVip(String receiveDay) async {
-    // 还原到最初项目的签到架构：优先调用 /youth/day/vip（需传 receive_day）。
-    // 若该接口已被酷狗停用（error_code 20028 等拒领码）或请求失败，
-    // 自动回退到可用的 /youth/vip，保证手动/自动签到仍能完成。
-    final primary = await _post(
-      KugouEndpoints.youthDayVip,
-      data: {'receive_day': receiveDay},
-    );
-    final errCode = primary?['error_code'] as int?;
-    final isRefusedOrFailed = primary == null || errCode == 20028;
-    if (!isRefusedOrFailed) {
-      return primary; // 成功 / 今日已签到 等正常响应，直接返回
-    }
+  /// 收藏歌单（订阅）
+  /// 返回 true 表示收藏成功
+  Future<bool> collectPlaylist(String specialId) async {
     try {
-      final fallback = await _post(KugouEndpoints.youthVip, data: {});
-      if (fallback != null) return fallback;
-    } catch (_) {}
-    return primary; // 回退也失败，返回原始响应供上层提示
-  }
-
-  Future<Map<String, dynamic>?> upgradeDayVip() async {
-        return await _post(KugouEndpoints.youthDayVipUpgrade);
-  }
-
-  Future<Map<String, dynamic>?> getYouthMonthVipRecord({String? month}) async {
-    final query = <String, dynamic>{};
-    if (month != null && month.isNotEmpty) {
-      query['month'] = month;
+      final result = await _post(
+        '/mv/action/collect',
+        data: {'specialid': specialId},
+      );
+      return result != null && (result['status'] == 1 || result['errcode'] == 0);
+    } catch (e) {
+            return false;
     }
+  }
+
+  /// 取消收藏歌单（取消订阅）
+  /// 返回 true 表示取消成功
+  Future<bool> uncollectPlaylist(String specialId) async {
+    try {
+      final result = await _post(
+        '/mv/action/uncollect',
+        data: {'specialid': specialId},
+      );
+      return result != null && (result['status'] == 1 || result['errcode'] == 0);
+    } catch (e) {
+            return false;
+    }
+  }
+
+  // ==================== Login ====================
+
+  /// 获取登录二维码
+  Future<KugouQrLogin?> getQrKey() async {
+    final json = await _get(KugouEndpoints.qrKey);
+    if (json == null) return null;
+    try {
+      final data = json['data'] as Map<String, dynamic>? ?? json;
+      return KugouQrLogin.fromJson(data);
+    } catch (e) {
+            return null;
+    }
+  }
+
+  /// 创建登录二维码（返回二维码内容）
+  Future<String?> createQrCode(String key) async {
+    final json = await _get(
+      KugouEndpoints.qrCreate,
+      queryParameters: {'key': key},
+    );
+    if (json == null) return null;
+    try {
+      final data = json['data'] as Map<String, dynamic>? ?? json;
+      return data['content']?.toString() ?? data['url']?.toString();
+    } catch (e) {
+            return null;
+    }
+  }
+
+  /// 检查二维码扫描状态
+  /// 返回 0=未扫描, 1=已扫描待确认, 2=已确认, 3=已过期
+  Future<int> checkQrStatus(String key) async {
+    final json = await _get(
+      KugouEndpoints.qrCheck,
+      queryParameters: {'key': key},
+    );
+    if (json == null) return 3;
+    try {
+      final status = json['status'] ?? json['data']?['status'];
+      if (status is int) return status;
+      return int.tryParse(status.toString()) ?? 3;
+    } catch (e) {
+            return 3;
+    }
+  }
+
+  /// 获取用户信息（登录成功后调用）
+  Future<KugouUserInfo?> getUserInfo() async {
+    final json = await _get(KugouEndpoints.userInfo);
+    if (json == null) return null;
+    try {
+      final data = json['data'] as Map<String, dynamic>? ?? json;
+      return KugouUserInfo.fromJson(data);
+    } catch (e) {
+            return null;
+    }
+  }
+
+  /// 手机号登录
+  Future<Map<String, dynamic>?> loginByPhone(String phone, String code) async {
+    final result = await _post(
+      KugouEndpoints.loginPhone,
+      data: {'phone': phone, 'code': code},
+    );
+    return result;
+  }
+
+  /// 发送验证码
+  Future<bool> sendSmsCode(String phone) async {
+    try {
+      final result = await _post(
+        KugouEndpoints.smsCode,
+        data: {'phone': phone},
+      );
+      return result != null && (result['status'] == 1 || result['errcode'] == 0);
+    } catch (e) {
+            return false;
+    }
+  }
+
+  // ==================== User Collection ====================
+
+  /// 获取用户收藏的歌单列表
+  Future<List<KugouPlaylistBrief>?> getUserCollections({int page = 1, int pagesize = 30}) async {
+    final json = await _get(
+      KugouEndpoints.userCollections,
+      queryParameters: {'page': page, 'pagesize': pagesize},
+    );
+    if (json == null) return null;
+    try {
+      final data = json['data'] as Map<String, dynamic>?;
+      if (data == null) return null;
+      final list = (data['list'] ?? data['info'] ?? []) as List<dynamic>;
+      return list.map((e) => KugouPlaylistBrief.fromJson(e as Map<String, dynamic>)).toList();
+    } catch (e) {
+            return null;
+    }
+  }
+
+  /// 获取用户收藏的歌曲列表（我喜欢）
+  Future<List<Song>?> getUserFavoriteSongs({int page = 1, int pagesize = 30}) async {
+    final json = await _get(
+      KugouEndpoints.userFavoriteSongs,
+      queryParameters: {'page': page, 'pagesize': pagesize},
+    );
+    if (json == null) return null;
+    try {
+      final data = json['data'] as Map<String, dynamic>?;
+      if (data == null) return null;
+      final list = (data['list'] ?? data['songs'] ?? []) as List<dynamic>;
+      return list.map((e) {
+        try {
+          return KugouSongDetail.fromJson(e as Map<String, dynamic>).toSong();
+        } catch (_) {
+          return null;
+        }
+      }).where((s) => s != null).cast<Song>().toList();
+    } catch (e) {
+            return null;
+    }
+  }
+
+  // ==================== VIP ====================
+
+  /// 获取 VIP 信息
+  Future<Map<String, dynamic>?> getVipInfo() async {
+    final json = await _get(KugouEndpoints.vipInfo);
+    if (json == null) return null;
+    try {
+      return json['data'] as Map<String, dynamic>? ?? json;
+    } catch (e) {
+            return null;
+    }
+  }
+
+  // ==================== Daily Recommend ====================
+
+  /// 获取每日推荐歌曲
+  Future<List<Song>?> getDailyRecommendSongs() async {
+    final json = await _get(KugouEndpoints.dailyRecommend);
+    if (json == null) return null;
+    try {
+      final data = json['data'] as Map<String, dynamic>?;
+      if (data == null) return null;
+      final list = (data['list'] ?? data['songs'] ?? []) as List<dynamic>;
+      return list.map((e) {
+        try {
+          return KugouSongDetail.fromJson(e as Map<String, dynamic>).toSong();
+        } catch (_) {
+          return null;
+        }
+      }).where((s) => s != null).cast<Song>().toList();
+    } catch (e) {
+            return null;
+    }
+  }
+
+  // ==================== Recent Listen ====================
+
+  /// 获取最近播放记录
+  Future<List<Song>?> getRecentSongs({int page = 1, int pagesize = 30}) async {
+    final json = await _get(
+      KugouEndpoints.recentSongs,
+      queryParameters: {'page': page, 'pagesize': pagesize},
+    );
+    if (json == null) return null;
+    try {
+      final data = json['data'] as Map<String, dynamic>?;
+      if (data == null) return null;
+      final list = (data['list'] ?? data['songs'] ?? []) as List<dynamic>;
+      return list.map((e) {
+        try {
+          return KugouSongDetail.fromJson(e as Map<String, dynamic>).toSong();
+        } catch (_) {
+          return null;
+        }
+      }).where((s) => s != null).cast<Song>().toList();
+    } catch (e) {
+            return null;
+    }
+  }
+
+  // ==================== Search Complex ====================
+
+  /// 复合搜索（歌曲+歌单+专辑+歌手）
+  Future<Map<String, dynamic>?> searchAll(String keywords) async {
     return await _get(
-      KugouEndpoints.youthMonthVipRecord,
-      queryParameters: query.isNotEmpty ? query : null,
+      KugouEndpoints.searchComplex,
+      queryParameters: {'keywords': keywords},
     );
   }
+
+  // ==================== Top/Hot ====================
+
+  /// 获取热歌榜
+  Future<List<Song>?> getHotSongs({int page = 1, int pagesize = 30}) async {
+    final json = await _get(
+      KugouEndpoints.top,
+      queryParameters: {'page': page, 'pagesize': pagesize},
+    );
+    if (json == null) return null;
+    try {
+      final data = json['data'] as Map<String, dynamic>?;
+      if (data == null) return null;
+      final list = (data['list'] ?? data['songs'] ?? []) as List<dynamic>;
+      return list.map((e) {
+        try {
+          return KugouSongDetail.fromJson(e as Map<String, dynamic>).toSong();
+        } catch (_) {
+          return null;
+        }
+      }).where((s) => s != null).cast<Song>().toList();
+    } catch (e) {
+            return null;
+    }
+  }
+
+  // ==================== User Info Extended ====================
+
+  /// 获取用户详细信息（头像、昵称等）
+  Future<Map<String, dynamic>?> getUserDetail() async {
+    final json = await _get('/user/detail');
+    if (json == null) return null;
+    try {
+      return json['data'] as Map<String, dynamic>? ?? json;
+    } catch (e) {
+            return null;
+    }
+  }
+
+  // ==================== Song Detail Extended ====================
+
+  /// 获取歌曲详情（歌词、评论数等）
+  Future<Map<String, dynamic>?> getSongInfo(String hash) async {
+    final json = await _get(
+      '/song/info',
+      queryParameters: {'hash': hash.toLowerCase()},
+    );
+    if (json == null) return null;
+    try {
+      return json['data'] as Map<String, dynamic>? ?? json;
+    } catch (e) {
+            return null;
+    }
+  }
+
+  // ==================== Favorites ====================
+
+  /// 添加歌曲到收藏（我喜欢）
+  Future<bool> addFavorite(String hash, {String? albumAudioId}) async {
+    try {
+      final data = <String, dynamic>{
+        'hash': hash.toLowerCase(),
+        'action': 'add',
+      };
+      if (albumAudioId != null) data['album_audio_id'] = albumAudioId;
+      final result = await _post('/mv/action/add', data: data);
+      return result != null && (result['status'] == 1 || result['errcode'] == 0);
+    } catch (e) {
+            return false;
+    }
+  }
+
+  /// 取消收藏歌曲
+  Future<bool> removeFavorite(String hash, {String? albumAudioId}) async {
+    try {
+      final data = <String, dynamic>{
+        'hash': hash.toLowerCase(),
+        'action': 'del',
+      };
+      if (albumAudioId != null) data['album_audio_id'] = albumAudioId;
+      final result = await _post('/mv/action/add', data: data);
+      return result != null && (result['status'] == 1 || result['errcode'] == 0);
+    } catch (e) {
+            return false;
+    }
+  }
+
+  // ==================== Tag ====================
+
+  /// 获取标签列表
+  Future<List<Map<String, dynamic>>?> getTagList() async {
+    final json = await _get(KugouEndpoints.tagList);
+    if (json == null) return null;
+    try {
+      final data = json['data'];
+      List<dynamic> list;
+      if (data is List) {
+        list = data;
+      } else if (data is Map<String, dynamic>) {
+        list = (data['list'] ?? data['info'] ?? []) as List<dynamic>;
+      } else {
+        list = [];
+      }
+      return list.cast<Map<String, dynamic>>();
+    } catch (e) {
+            return null;
+    }
+  }
+
+  /// 获取标签下歌单
+  Future<List<KugouPlaylistBrief>?> getTagPlaylists(String tagId, {int page = 1, int pagesize = 20}) async {
+    final json = await _get(
+      KugouEndpoints.tagPlaylists,
+      queryParameters: {'tagid': tagId, 'page': page, 'pagesize': pagesize},
+    );
+    if (json == null) return null;
+    try {
+      final data = json['data'];
+      List<dynamic> list;
+      if (data is List) {
+        list = data;
+      } else if (data is Map<String, dynamic>) {
+        list = (data['list'] ?? data['info'] ?? []) as List<dynamic>;
+      } else {
+        list = [];
+      }
+      return list.map((e) => KugouPlaylistBrief.fromJson(e as Map<String, dynamic>)).toList();
+    } catch (e) {
+            return null;
+    }
+  }
+
+  // ==================== Search History ====================
+
+  /// 保存搜索历史
+  Future<void> saveSearchHistory(String keyword) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('search_history') ?? [];
+      list.remove(keyword); // 去重
+      list.insert(0, keyword); // 最新在前
+      if (list.length > 50) list.removeRange(50, list.length); // 最多保留50条
+      await prefs.setStringList('search_history', list);
+    } catch (e) {
+          }
+  }
+
+  /// 获取搜索历史
+  Future<List<String>> getSearchHistory() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getStringList('search_history') ?? [];
+    } catch (e) {
+            return [];
+    }
+  }
+
+  /// 清除搜索历史
+  Future<void> clearSearchHistory() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('search_history');
+    } catch (e) {
+          }
+  }
+
+  // ==================== Play URL Extended ====================
+
+  /// 获取播放链接（带试听标记）
+  Future<KugouPlayUrl?> getSongPlayUrl(
+    String hash, {
+    String quality = '128',
+    String? albumId,
+    String? albumAudioId,
+  }) async {
+    return await getSongUrl(
+      hash,
+      quality: quality,
+      albumId: albumId,
+      albumAudioId: albumAudioId,
+    );
+  }
+
+  // ==================== Token Status ====================
+
+  String? get token => _token;
+  String? get userid => _userid;
+  String? get vipToken => _vipToken;
+  String? get dfid => _dfid;
+  bool get isLoggedIn => _token != null && _userid != null;
+  bool get hasVipToken => _vipToken != null && _vipToken!.isNotEmpty;
 }

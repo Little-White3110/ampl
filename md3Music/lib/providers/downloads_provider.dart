@@ -196,7 +196,11 @@ class DownloadsProvider extends ChangeNotifier {
   /// 2. 调用 MetadataWriter.writeMetadata 写入标签
   /// 3. 清理临时封面文件
   Future<void> _embedMetadata(DownloadTask task) async {
-    if (task.localPath == null) return;
+    if (task.localPath == null) {
+      debugPrint('[EmbedMetadata] ❌ skipped: localPath is null for ${task.songId}');
+      return;
+    }
+    debugPrint('[EmbedMetadata] ▶ start for "${task.title}" (id=${task.songId})');
 
     String? artworkPath;
     try {
@@ -205,9 +209,12 @@ class DownloadsProvider extends ChangeNotifier {
         _downloadArtwork(task.songId, task.artworkUri),
         _fetchLyric(task.songId, task.title),
       ]);
-      // Future.wait 已经推断为 List<String?>，无需显式 cast
       artworkPath = results[0];
       final lyricText = results[1];
+
+      debugPrint('[EmbedMetadata] artwork=${artworkPath ?? "null"}, '
+          'lyricLen=${lyricText?.length ?? 0}, '
+          'file=${task.localPath}');
 
       final ok = await MetadataWriter.writeMetadata(
         filePath: task.localPath!,
@@ -217,13 +224,9 @@ class DownloadsProvider extends ChangeNotifier {
         artworkPath: artworkPath,
         lyrics: lyricText,
       );
-      if (!ok && kDebugMode) {
-        debugPrint('[DownloadsProvider] metadata write failed for ${task.songId}');
-      }
+      debugPrint('[EmbedMetadata] writeMetadata returned: $ok');
     } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[DownloadsProvider] embed metadata error: $e');
-      }
+      debugPrint('[EmbedMetadata] ❌ error: $e');
     } finally {
       // 清理临时封面文件
       if (artworkPath != null) {
@@ -236,15 +239,22 @@ class DownloadsProvider extends ChangeNotifier {
   }
 
   /// 下载封面图到 app 临时目录，返回本地路径。
+  /// 使用 KugouApiClient 的 Dio 单例（带 Authorization header），
+  /// 否则裸 Dio 请求 Kugou CDN 会 403 拒绝。
   /// 失败返回 null（容忍）。
   Future<String?> _downloadArtwork(String songId, String? artworkUri) async {
     if (artworkUri == null || artworkUri.isEmpty) return null;
     try {
       final tmpDir = await getTemporaryDirectory();
       final path = '${tmpDir.path}/${songId}_art.jpg';
-      await _dio.download(artworkUri, path);
+      // KugouApiClient 是单例，其 Dio 带 Authorization + dfid，
+      // 封面 CDN 也需要这些 header 才能下载。
+      final kugouDio = KugouApiClient().dio;
+      await kugouDio.download(artworkUri, path);
+      debugPrint('[EmbedMetadata] artwork downloaded: $path');
       return path;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[EmbedMetadata] artwork download failed: $e');
       return null;
     }
   }
@@ -256,9 +266,17 @@ class DownloadsProvider extends ChangeNotifier {
     try {
       final api = KugouApiClient();
       final lyric = await api.getLyric(songId, songName: songName);
-      if (lyric == null) return null;
-      return lyric.displayLrcLyric ?? lyric.decodedContent;
-    } catch (_) {
+      if (lyric == null) {
+        debugPrint('[EmbedMetadata] getLyric returned null for $songId');
+        return null;
+      }
+      final text = lyric.displayLrcLyric ?? lyric.decodedContent;
+      debugPrint('[EmbedMetadata] lyric: displayLrcLyric=${lyric.displayLrcLyric?.length ?? 0}, '
+          'decodedContent=${lyric.decodedContent?.length ?? 0}, '
+          'result=${text?.length ?? 0} chars');
+      return text;
+    } catch (e) {
+      debugPrint('[EmbedMetadata] fetchLyric failed: $e');
       return null;
     }
   }
