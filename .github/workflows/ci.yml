@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feature/download-service-optimization']
     tags: ['v*']
   pull_request:
     branches: [main]

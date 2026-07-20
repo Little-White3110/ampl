@@ -62,6 +62,8 @@ dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("io.github.proify.lyricon:provider:0.1.70")
     implementation("io.github.proify.lyricon.lyric:model:0.1.70")
+    // JAudioTagger 社区 Android 适配分叉：写 MP3 ID3v2 / FLAC VorbisComment 标签
+    implementation("com.github.AdrienPoupa:jaudiotagger:1.0.1")
 }
 
 flutter {
