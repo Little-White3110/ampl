@@ -185,28 +185,36 @@ jobs:
           curl -L --fail -o /tmp/native-libs.zip \
             "https://github.com/zzyoxml/md3Music/releases/download/native-libs/native-libs.zip"
           mkdir -p /tmp/native-libs
-          unzip -q /tmp/native-libs.zip -d /tmp/native-libs
+          # zip 用 Windows 反斜杠路径打包，unzip 会因 backslash warning exit 1，
+          # 改用 Python zipfile（对 backslash 容错，自动转 forward slash）。
+          python3 -c "import zipfile; zipfile.ZipFile('/tmp/native-libs.zip').extractall('/tmp/native-libs')"
 
           echo "==> zip 内部结构："
           find /tmp/native-libs -maxdepth 3 -type f | head -50
 
+          # zip 内部结构（已确认）：
+          #   jniLibs/<abi>/libnode.so          （3 个 ABI）
+          #   cpp/CMakeLists.txt
+          #   cpp/nodejs_bridge.cpp
+          #   cpp/include/node/*.h              （Node.js v18 头文件）
           # 将各 ABI 的 libnode.so 放到 android/app/src/main/jniLibs/<abi>/
           for abi in "${ABIS[@]}"; do
             mkdir -p "android/app/src/main/jniLibs/${abi}"
-            # 兼容多种可能结构：<root>/<abi>/libnode.so 或 jniLibs/<abi>/libnode.so
-            libnode=$(find /tmp/native-libs -path "*${abi}/libnode.so" -type f | head -1)
-            if [ -z "$libnode" ]; then
+            src="/tmp/native-libs/jniLibs/${abi}/libnode.so"
+            if [ ! -f "$src" ]; then
               echo "❌ 未找到 ${abi}/libnode.so"
               exit 1
             fi
-            cp "$libnode" "android/app/src/main/jniLibs/${abi}/libnode.so"
+            cp "$src" "android/app/src/main/jniLibs/${abi}/libnode.so"
             ls -la "android/app/src/main/jniLibs/${abi}/"
           done
 
           # 提取 Node.js v18 头文件到 android/app/src/main/cpp/include/node/
-          # 兼容多种可能结构：<root>/include/node/node.h 或 node-v18.20.4/include/node/node.h
-          node_h=$(find /tmp/native-libs -path "*/include/node/node.h" -type f | head -1)
-          if [ -z "$node_h" ]; then
+          node_src_dir="/tmp/native-libs/cpp/include/node"
+          if [ -f "${node_src_dir}/node.h" ]; then
+            mkdir -p android/app/src/main/cpp/include
+            cp -r "$node_src_dir" android/app/src/main/cpp/include/
+          else
             echo "❌ zip 内未找到 Node.js 头文件，回退从 nodejs.org 下载"
             mkdir -p /tmp/node-headers
             curl -L --fail \
@@ -215,11 +223,6 @@ jobs:
             mkdir -p android/app/src/main/cpp/include
             cp -r /tmp/node-headers/node-v18.20.4/include/node \
               android/app/src/main/cpp/include/
-          else
-            # 头文件目录是 node.h 所在的 node/ 目录
-            node_dir=$(dirname "$node_h")
-            mkdir -p android/app/src/main/cpp/include
-            cp -r "$node_dir" android/app/src/main/cpp/include/
           fi
 
           echo "==> 校验 jniLibs 与 cpp/include"
