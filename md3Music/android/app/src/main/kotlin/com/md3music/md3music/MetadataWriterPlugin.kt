@@ -4,7 +4,6 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
-import org.jaudiotagger.tag.images.ArtworkFactory
 import java.io.File
 import java.util.logging.Level
 import java.util.logging.Logger
@@ -112,13 +111,9 @@ class MetadataWriterPlugin {
                 val artFile = File(artworkPath)
                 android.util.Log.d("MetadataWriter", "  artwork exists=${artFile.exists()} size=${artFile.length()}")
                 if (artFile.exists()) {
-                    // FLAC 文件：FixedAndroidArtwork 绕过 ImageIO 依赖
-                    // MP3/其他：ArtworkFactory 使用标准路径（不调用 setImageFromData）
-                    val artwork = if (tag is org.jaudiotagger.tag.flac.FlacTag) {
-                        FixedAndroidArtwork(artFile)
-                    } else {
-                        ArtworkFactory.createArtworkFromFile(artFile)
-                    }
+                    // 使用 FixedAndroidArtwork 绕过 AndroidArtwork.setImageFromData()
+                    // 中的 UnsupportedOperationException（Android 缺少 ImageIO）
+                    val artwork = FixedAndroidArtwork.createFromFile(artFile)
                     // 先删除旧封面避免重复（部分格式 createField 会叠加）
                     try { tag.deleteArtworkField() } catch (_: Throwable) {}
                     tag.setField(artwork)
