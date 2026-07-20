@@ -50,7 +50,12 @@ class PlayerProvider extends ChangeNotifier {
   Song? get currentSong => _currentSong;
   bool get isPlaying => _isPlaying;
   Duration get position => _position;
-  Duration? get duration => _duration;
+  /// 当前播放时长。优先用音频引擎的实际时长，fallback 到歌曲元数据时长。
+  ///
+  /// fallback 的原因：恢复上次会话时音频源未加载，durationStream 会发射 null
+  /// 覆盖 _duration。用 currentSong.duration 作为 fallback 让 mini player
+  /// 进度条在恢复后立即可见，不需要等用户点播放。
+  Duration? get duration => _duration ?? _currentSong?.duration;
   List<Song> get playlist => _playlist;
   int get currentIndex => _currentIndex;
   AppLoopMode get loopMode => _loopMode;
@@ -147,6 +152,19 @@ class PlayerProvider extends ChangeNotifier {
   /// 供 app.dart 在 AppLifecycleState.paused 时调用，保存当前播放状态。
   Future<void> savePlaybackStateForBackground() async {
     await _savePlaybackState();
+  }
+
+  /// 供 app.dart 在 AppLifecycleState.resumed 时调用。
+  /// 如果当前是被音频焦点打断（如抖音抢占 AUDIOFOCUS_GAIN）导致的暂停，
+  /// 主动恢复播放。用户手动暂停的情况下不会恢复。
+  Future<void> tryResumeAfterFocusLoss() async {
+    // 如果有待恢复的上次会话进度，走懒加载恢复流程
+    if (_pendingResumePosition != null && _currentSong != null) {
+      // 不自动恢复上次会话——仅设置标记，等用户主动按播放
+      // 这里只处理"被焦点打断的暂停"情况
+      return;
+    }
+    await _audioService?.tryResumeAfterFocusLoss();
   }
 
   /// 私有保存方法。多处调用（切歌/暂停/完成/清空）。

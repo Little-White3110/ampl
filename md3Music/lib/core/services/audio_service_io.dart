@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
 
@@ -15,6 +17,10 @@ class AudioService {
   /// 仅在 interruption begin 时置 true；用户主动 pause/play 时清零。
   /// interruption end 时只有此标记为 true 才自动恢复播放，避免
   /// "用户手动暂停 → 其他 app 短暂占用焦点又释放 → 错误自动恢复播放"。
+  ///
+  /// 注意：Android 的 AUDIOFOCUS_LOSS（永久丢失，如抖音请求 AUDIOFOCUS_GAIN）
+  /// 只触发 interruption begin，不触发 interruption end。
+  /// 这种情况需要 app 回到前台时调用 [tryResumeAfterFocusLoss] 主动恢复。
   bool _pausedByInterruption = false;
 
   AudioPlayer get player => _player;
@@ -49,6 +55,13 @@ class AudioService {
       final session = await AudioSession.instance;
       await session.configure(const AudioSessionConfiguration.music());
       session.interruptionEventStream.listen((event) {
+        developer.log(
+          'interruption event: begin=${event.begin}, type=${event.type}, '
+          'player.playing=${_player.playing}, '
+          'processingState=${_player.processingState}, '
+          '_pausedByInterruption=$_pausedByInterruption',
+          name: 'AudioService',
+        );
         if (event.begin) {
           switch (event.type) {
             case AudioInterruptionType.duck:
@@ -60,7 +73,10 @@ class AudioService {
             case AudioInterruptionType.unknown:
               if (_player.playing) {
                 // 标记为"被打断的暂停"，恢复焦点时自动续播；
-                // 直接调用 _player.pause() 绕过公开 pause()，保留标记
+                // 直接调用 _player.pause() 绕过公开 pause()，保留标记。
+                // 注意：Android AUDIOFOCUS_LOSS（永久丢失）也走这里，
+                // 但不会触发 interruption end，需要 app 回前台时
+                // 调用 tryResumeAfterFocusLoss 主动恢复。
                 _pausedByInterruption = true;
                 _player.pause();
               }
@@ -78,10 +94,14 @@ class AudioService {
               // 部分设备/系统把焦点恢复事件映射成 unknown 而非 pause，
               // 因此 unknown 也需要处理，否则抖音等 app 打断后无法自动续播。
               // 仅当之前是被打断导致的暂停时才恢复，避免手动暂停被错误唤醒。
+              // 放宽 processingState 检查：只要不是 idle/completed 就尝试恢复。
               if (_pausedByInterruption &&
                   !_player.playing &&
-                  _player.processingState == ProcessingState.ready) {
+                  _player.processingState != ProcessingState.idle &&
+                  _player.processingState != ProcessingState.completed) {
                 _pausedByInterruption = false;
+                developer.log('恢复播放：interruption end 触发自动续播',
+                    name: 'AudioService');
                 play();
               }
               break;
@@ -109,6 +129,33 @@ class AudioService {
     // 用户主动暂停：清除打断标记，避免后续焦点恢复时错误自动播放
     _pausedByInterruption = false;
     await _player.pause();
+  }
+
+  /// App 回到前台时调用：如果之前是被音频焦点打断暂停的，主动恢复播放。
+  ///
+  /// 背景：Android AUDIOFOCUS_LOSS（永久丢失，如抖音请求 AUDIOFOCUS_GAIN）
+  /// 只触发 interruption begin，不触发 interruption end。
+  /// 当用户从抖音切回本 app 时，AppLifecycleState 变为 resumed，
+  /// 此时检查 _pausedByInterruption 标记，如果仍为 true 说明用户没手动操作过，
+  /// 可以安全恢复播放。
+  ///
+  /// 返回 true 表示已恢复播放，false 表示不需要恢复（用户已手动操作或正在播放）。
+  Future<bool> tryResumeAfterFocusLoss() async {
+    developer.log(
+      'tryResumeAfterFocusLoss: _pausedByInterruption=$_pausedByInterruption, '
+      'playing=${_player.playing}, processingState=${_player.processingState}',
+      name: 'AudioService',
+    );
+    if (_pausedByInterruption &&
+        !_player.playing &&
+        _player.processingState != ProcessingState.idle &&
+        _player.processingState != ProcessingState.completed) {
+      _pausedByInterruption = false;
+      developer.log('恢复播放：app 回前台触发主动恢复', name: 'AudioService');
+      await _player.play();
+      return true;
+    }
+    return false;
   }
 
   Future<void> stop() async {
