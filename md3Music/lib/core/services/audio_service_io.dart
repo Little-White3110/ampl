@@ -11,6 +11,12 @@ class AudioService {
   final AudioPlayer _player = AudioPlayer();
   final ConcatenatingAudioSource _playlistSource = ConcatenatingAudioSource(children: []);
 
+  /// 标记当前暂停是否由音频焦点被打断导致。
+  /// 仅在 interruption begin 时置 true；用户主动 pause/play 时清零。
+  /// interruption end 时只有此标记为 true 才自动恢复播放，避免
+  /// "用户手动暂停 → 其他 app 短暂占用焦点又释放 → 错误自动恢复播放"。
+  bool _pausedByInterruption = false;
+
   AudioPlayer get player => _player;
 
   Stream<Duration> get positionStream => _player.positionStream;
@@ -53,7 +59,10 @@ class AudioService {
             case AudioInterruptionType.pause:
             case AudioInterruptionType.unknown:
               if (_player.playing) {
-                pause();
+                // 标记为"被打断的暂停"，恢复焦点时自动续播；
+                // 直接调用 _player.pause() 绕过公开 pause()，保留标记
+                _pausedByInterruption = true;
+                _player.pause();
               }
               break;
           }
@@ -64,8 +73,13 @@ class AudioService {
               // _player.setVolume(1.0);  // 注释掉：避免音量波动
               break;
             case AudioInterruptionType.pause:
-              // 仅在确实暂停后才恢复播放
-              if (!_player.playing && _player.processingState == ProcessingState.ready) {
+              // 仅当之前是被打断导致的暂停时，才自动恢复播放。
+              // 用户手动暂停后其他 app 短暂占用焦点又释放时，标记为 false，
+              // 不会进入此分支，避免错误自动续播。
+              if (_pausedByInterruption &&
+                  !_player.playing &&
+                  _player.processingState == ProcessingState.ready) {
+                _pausedByInterruption = false;
                 play();
               }
               break;
@@ -76,7 +90,9 @@ class AudioService {
       });
       session.becomingNoisyEventStream.listen((_) {
         if (_player.playing) {
-          pause();
+          // 拔耳机暂停不算"被打断"，焦点恢复时不应自动续播
+          _pausedByInterruption = false;
+          _player.pause();
         }
       });
     } catch (e) {
@@ -84,10 +100,14 @@ class AudioService {
   }
 
   Future<void> play() async {
+    // 用户主动播放：清除打断标记，避免后续焦点事件误判
+    _pausedByInterruption = false;
     await _player.play();
   }
 
   Future<void> pause() async {
+    // 用户主动暂停：清除打断标记，避免后续焦点恢复时错误自动播放
+    _pausedByInterruption = false;
     await _player.pause();
   }
 

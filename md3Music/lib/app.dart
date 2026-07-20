@@ -196,6 +196,11 @@ class _MainLayoutState extends State<_MainLayout> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 进入后台时保存播放状态：防止后台被系统回收后丢失上次播放进度
+    if (state == AppLifecycleState.paused) {
+      // ignore: discarded_futures — fire-and-forget，不阻塞生命周期回调
+      context.read<PlayerProvider>().savePlaybackStateForBackground();
+    }
     // 当系统即将销毁应用进程时（包含后台划掉 / 系统回收），Flutter 会先收到 detached。
     // 此时同步触发 Node.js 关闭：若进程随之被 kill 也无副作用；若进程仍存活则关闭 libuv。
     if (state == AppLifecycleState.detached) {
