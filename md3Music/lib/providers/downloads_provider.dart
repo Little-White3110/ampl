@@ -199,8 +199,9 @@ class DownloadsProvider extends ChangeNotifier {
         _downloadArtwork(task.songId, task.artworkUri),
         _fetchLyric(task.songId, task.title),
       ]);
-      artworkPath = results[0] as String?;
-      final lyricText = results[1] as String?;
+      // Future.wait 已经推断为 List<String?>，无需显式 cast
+      artworkPath = results[0];
+      final lyricText = results[1];
 
       final ok = await MetadataWriter.writeMetadata(
         filePath: task.localPath!,
