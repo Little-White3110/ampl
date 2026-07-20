@@ -173,9 +173,10 @@ jobs:
         shell: bash
         run: |
           set -e
-          # 上游 zzyoxml/md3Music 在 native-libs Release 中发布了 native-libs.zip，
-          # 内含 3 个 ABI 的 libnode.so 与 Node.js v18 头文件。
-          # 之前从分 ABI APK 提取的方案已失效（上游不再发布 app-<abi>-release.apk）。
+          # 上游 zzyoxml/md3Music 在 native-libs Release 发布 native-libs.zip，
+          # 内含 jniLibs/<abi>/libnode.so 与 cpp/include/node/*.h。
+          # zip 用 Windows 反斜杠路径打包，unzip 会 exit 1，改用 Python zipfile
+          # 一步到位：直接读取 zip 内 entry 写到目标位置，不落地到 /tmp。
           ABIS=("arm64-v8a" "armeabi-v7a")
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.include_x86_64 }}" = "true" ]; then
             ABIS+=("x86_64")
@@ -184,49 +185,63 @@ jobs:
 
           curl -L --fail -o /tmp/native-libs.zip \
             "https://github.com/zzyoxml/md3Music/releases/download/native-libs/native-libs.zip"
-          mkdir -p /tmp/native-libs
-          # zip 用 Windows 反斜杠路径打包，unzip 会因 backslash warning exit 1，
-          # 改用 Python zipfile（对 backslash 容错，自动转 forward slash）。
-          python3 -c "import zipfile; zipfile.ZipFile('/tmp/native-libs.zip').extractall('/tmp/native-libs')"
 
-          echo "==> zip 内部结构："
-          find /tmp/native-libs -maxdepth 3 -type f | head -50
+          # 用 Python 直接从 zip 提取所需文件到最终位置，避免中间解压环节出错
+          python3 << 'PYEOF'
+          import zipfile, os, sys
+          z = zipfile.ZipFile('/tmp/native-libs.zip')
+          names = z.namelist()
+          print('==> zip entries (first 20):')
+          for n in names[:20]:
+              print('  ', n)
+          # 处理所有 ABI 的 libnode.so
+          abis = ['arm64-v8a', 'armeabi-v7a', 'x86_64']
+          for abi in abis:
+              # zip 内路径用 forward slash（Python 自动转换 backslash）
+              candidate = f'jniLibs/{abi}/libnode.so'
+              if candidate in names:
+                  dst_dir = f'android/app/src/main/jniLibs/{abi}'
+                  os.makedirs(dst_dir, exist_ok=True)
+                  dst = f'{dst_dir}/libnode.so'
+                  with z.open(candidate) as src, open(dst, 'wb') as out:
+                      out.write(src.read())
+                  print(f'  ✓ extracted {candidate} -> {dst} ({os.path.getsize(dst)} bytes)')
+              else:
+                  print(f'  ✗ {candidate} not in zip')
+          # 提取 cpp/include/node/*.h 到 android/app/src/main/cpp/include/node/
+          node_files = [n for n in names if n.startswith('cpp/include/node/')]
+          if not node_files:
+              print('  ✗ cpp/include/node/*.h not in zip, fallback to nodejs.org')
+              sys.exit(2)
+          dst_dir = 'android/app/src/main/cpp/include/node'
+          os.makedirs(dst_dir, exist_ok=True)
+          for n in node_files:
+              # 保留相对路径：cpp/include/node/foo.h -> android/app/src/main/cpp/include/node/foo.h
+              rel = n[len('cpp/include/node/'):]
+              # 防御 zip slip
+              if rel.startswith('/') or '..' in rel:
+                  continue
+              # 可能是子目录
+              dst = os.path.join(dst_dir, rel)
+              os.makedirs(os.path.dirname(dst), exist_ok=True)
+              with z.open(n) as src, open(dst, 'wb') as out:
+                  out.write(src.read())
+          print(f'  ✓ extracted {len(node_files)} node headers')
+          PYEOF
 
-          # zip 内部结构（已确认）：
-          #   jniLibs/<abi>/libnode.so          （3 个 ABI）
-          #   cpp/CMakeLists.txt
-          #   cpp/nodejs_bridge.cpp
-          #   cpp/include/node/*.h              （Node.js v18 头文件）
-          # 将各 ABI 的 libnode.so 放到 android/app/src/main/jniLibs/<abi>/
+          # 校验
+          echo "==> 校验 jniLibs 与 cpp/include"
           for abi in "${ABIS[@]}"; do
-            mkdir -p "android/app/src/main/jniLibs/${abi}"
-            src="/tmp/native-libs/jniLibs/${abi}/libnode.so"
-            if [ ! -f "$src" ]; then
+            if [ ! -f "android/app/src/main/jniLibs/${abi}/libnode.so" ]; then
               echo "❌ 未找到 ${abi}/libnode.so"
               exit 1
             fi
-            cp "$src" "android/app/src/main/jniLibs/${abi}/libnode.so"
-            ls -la "android/app/src/main/jniLibs/${abi}/"
+            ls -la "android/app/src/main/jniLibs/${abi}/libnode.so"
           done
-
-          # 提取 Node.js v18 头文件到 android/app/src/main/cpp/include/node/
-          node_src_dir="/tmp/native-libs/cpp/include/node"
-          if [ -f "${node_src_dir}/node.h" ]; then
-            mkdir -p android/app/src/main/cpp/include
-            cp -r "$node_src_dir" android/app/src/main/cpp/include/
-          else
-            echo "❌ zip 内未找到 Node.js 头文件，回退从 nodejs.org 下载"
-            mkdir -p /tmp/node-headers
-            curl -L --fail \
-              "https://nodejs.org/dist/v18.20.4/node-v18.20.4-headers.tar.gz" \
-              | tar xz -C /tmp/node-headers
-            mkdir -p android/app/src/main/cpp/include
-            cp -r /tmp/node-headers/node-v18.20.4/include/node \
-              android/app/src/main/cpp/include/
+          if [ ! -f "android/app/src/main/cpp/include/node/node.h" ]; then
+            echo "❌ 未找到 cpp/include/node/node.h"
+            exit 1
           fi
-
-          echo "==> 校验 jniLibs 与 cpp/include"
-          ls android/app/src/main/jniLibs/*/
           ls android/app/src/main/cpp/include/node/node.h
 
       - name: Build APK for ${{ matrix.abi }}
