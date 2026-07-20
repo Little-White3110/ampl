@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -18,7 +17,6 @@ class DownloadsProvider extends ChangeNotifier {
   final DownloadsRepository _repository = DownloadsRepository();
   final DownloadManager _manager = DownloadManager();
   final SettingsRepository _settings = SettingsRepository();
-  final Dio _dio = Dio();
   List<DownloadTask> _tasks = [];
   StreamSubscription<DownloadTask>? _subscription;
 
