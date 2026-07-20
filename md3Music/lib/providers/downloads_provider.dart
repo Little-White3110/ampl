@@ -95,14 +95,19 @@ class DownloadsProvider extends ChangeNotifier {
   /// 上一次权限检查的缓存值（供 UI 判断是否需要提示用户去设置）。
   bool? get lastPermissionGranted => _lastPermissionGranted;
 
-  Future<void> downloadSong(Song song, {String quality = '128'}) async {
-    if (isDownloading(song.id)) return;
+  /// 触发下载。
+  /// 返回值：
+  ///   - true  = 已成功加入下载队列
+  ///   - false = 因权限被拒 / URL 解析失败 / 已在下载中等原因未开始
+  /// UI 层可根据返回值显示对应 SnackBar 提示。
+  Future<bool> downloadSong(Song song, {String quality = '128'}) async {
+    if (isDownloading(song.id)) return false;
 
-    // 1. 检查存储权限（首次下载触发系统设置跳转）
+    // 1. 检查存储权限（首次下载触发系统授权弹窗 / 设置跳转）
     final granted = await ensureStoragePermission();
     if (!granted) {
-      // UI 层根据 lastPermissionGranted 显示提示
-      return;
+      // lastPermissionGranted 供 UI 判断是"用户主动拒绝"还是"权限异常"
+      return false;
     }
 
     // 2. 解析下载 URL
@@ -120,10 +125,10 @@ class DownloadsProvider extends ChangeNotifier {
           downloadUrl = result.url;
         }
       } catch (e) {
-        return;
+        return false;
       }
     }
-    if (downloadUrl == null || downloadUrl.isEmpty) return;
+    if (downloadUrl == null || downloadUrl.isEmpty) return false;
 
     // 3. 读取下载目录
     final downloadDir = await _settings.getDownloadDir();
@@ -144,6 +149,7 @@ class DownloadsProvider extends ChangeNotifier {
 
     // 5. 启动下载
     _manager.download(task, downloadDir);
+    return true;
   }
 
   void cancelDownload(String songId) {
