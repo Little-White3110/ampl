@@ -112,7 +112,13 @@ class MetadataWriterPlugin {
                 val artFile = File(artworkPath)
                 android.util.Log.d("MetadataWriter", "  artwork exists=${artFile.exists()} size=${artFile.length()}")
                 if (artFile.exists()) {
-                    val artwork = ArtworkFactory.createArtworkFromFile(artFile)
+                    // FLAC 文件：FixedAndroidArtwork 绕过 ImageIO 依赖
+                    // MP3/其他：ArtworkFactory 使用标准路径（不调用 setImageFromData）
+                    val artwork = if (tag is org.jaudiotagger.tag.flac.FlacTag) {
+                        FixedAndroidArtwork(artFile)
+                    } else {
+                        ArtworkFactory.createArtworkFromFile(artFile)
+                    }
                     // 先删除旧封面避免重复（部分格式 createField 会叠加）
                     try { tag.deleteArtworkField() } catch (_: Throwable) {}
                     tag.setField(artwork)
