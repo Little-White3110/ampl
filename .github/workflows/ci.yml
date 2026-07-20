@@ -173,44 +173,29 @@ jobs:
         shell: bash
         run: |
           set -e
-          echo "==> 上游 zzyoxml/md3Music Release 未发布 native-libs.zip"
-          echo "==> 改为从上游 Release APK 提取 libnode.so，并从 nodejs.org 下载 v18 头文件"
-          # 默认只下载真机 ABI；x86_64 仅在手动触发且勾选时追加
-          ABIS=("arm64-v8a" "armeabi-v7a")
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.include_x86_64 }}" = "true" ]; then
-            ABIS+=("x86_64")
+          echo "==> 从上游 zzyoxml/md3Music Release 下载 native-libs.zip"
+          # 上游已发布 native-libs.zip（含 3 个 ABI 的 libnode.so + Node.js v18 头文件 + CMakeLists.txt）
+          curl -L --fail -o native-libs.zip \
+            "https://github.com/zzyoxml/md3Music/releases/download/native-libs/native-libs.zip"
+
+          echo "==> 解压 native-libs.zip 到 android/app/src/main/"
+          # zip 内目录结构：android/app/src/main/{jniLibs/<abi>/libnode.so, cpp/include/node/*.h, cpp/CMakeLists.txt, cpp/nodejs_bridge.cpp}
+          # 解压到仓库根的 android/app/src/main/，自动合并到现有目录结构
+          unzip -o native-libs.zip -d .
+
+          # 若未勾选 x86_64，删除 x86_64 目录避免被打包进 APK
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] || [ "${{ inputs.include_x86_64 }}" != "true" ]; then
+            echo "==> 未勾选 x86_64，删除 jniLibs/x86_64/"
+            rm -rf "android/app/src/main/jniLibs/x86_64" || true
           fi
-          echo "==> 将下载以下 ABI 的 libnode.so: ${ABIS[*]}"
-
-          for abi in "${ABIS[@]}"; do
-            mkdir -p "android/app/src/main/jniLibs/${abi}"
-            echo "==> 下载 app-${abi}-release.apk"
-            curl -L --fail -o "app-${abi}.apk" \
-              "https://github.com/zzyoxml/md3Music/releases/latest/download/app-${abi}-release.apk"
-            echo "==> 提取 lib/${abi}/libnode.so"
-            unzip -j "app-${abi}.apk" "lib/${abi}/libnode.so" \
-              -d "android/app/src/main/jniLibs/${abi}/"
-            ls -la "android/app/src/main/jniLibs/${abi}/"
-            rm "app-${abi}.apk"
-          done
-
-          # 下载 Node.js v18 头文件（nodejs-mobile 基于 Node.js 18）
-          # tarball 结构：node-v18.20.4/include/node/{node.h, cpp/, openssl/, uv/, ...}
-          # 之前用 --strip-components=1 提取到 cpp/include/node/ 会得到
-          # cpp/include/node/include/node/node.h（路径错误），导致 CMake 找不到 node.h。
-          # 改为：先解压到 /tmp，再把 include/node/ 子目录复制到目标位置。
-          echo "==> 下载 Node.js v18 头文件"
-          mkdir -p /tmp/node-headers
-          curl -L --fail \
-            "https://nodejs.org/dist/v18.20.4/node-v18.20.4-headers.tar.gz" \
-            | tar xz -C /tmp/node-headers
-          mkdir -p android/app/src/main/cpp/include
-          cp -r /tmp/node-headers/node-v18.20.4/include/node \
-            android/app/src/main/cpp/include/
 
           echo "==> 校验 jniLibs 与 cpp/include"
           ls android/app/src/main/jniLibs/*/
           ls android/app/src/main/cpp/include/node/node.h
+          ls android/app/src/main/cpp/CMakeLists.txt
+          ls android/app/src/main/cpp/nodejs_bridge.cpp
+
+          rm native-libs.zip
 
       - name: Build APK for ${{ matrix.abi }}
         run: |
