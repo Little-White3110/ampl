@@ -73,17 +73,17 @@ class AudioService {
               // _player.setVolume(1.0);  // 注释掉：避免音量波动
               break;
             case AudioInterruptionType.pause:
-              // 仅当之前是被打断导致的暂停时，才自动恢复播放。
-              // 用户手动暂停后其他 app 短暂占用焦点又释放时，标记为 false，
-              // 不会进入此分支，避免错误自动续播。
+            case AudioInterruptionType.unknown:
+              // 焦点恢复时自动续播。
+              // 部分设备/系统把焦点恢复事件映射成 unknown 而非 pause，
+              // 因此 unknown 也需要处理，否则抖音等 app 打断后无法自动续播。
+              // 仅当之前是被打断导致的暂停时才恢复，避免手动暂停被错误唤醒。
               if (_pausedByInterruption &&
                   !_player.playing &&
                   _player.processingState == ProcessingState.ready) {
                 _pausedByInterruption = false;
                 play();
               }
-              break;
-            case AudioInterruptionType.unknown:
               break;
           }
         }

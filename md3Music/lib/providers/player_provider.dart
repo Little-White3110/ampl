@@ -133,6 +133,9 @@ class PlayerProvider extends ChangeNotifier {
       _currentIndex = saved.currentIndex;
       _currentSong = saved.playlist[saved.currentIndex];
       _position = saved.position;
+      // 用歌曲元数据中的 duration 预填 _duration，让 mini player 进度条立即可见。
+      // 音频源未加载时 durationStream 不会发射事件，否则进度条会显示为 0。
+      _duration = _currentSong?.duration;
       _pendingResumePosition = saved.position;
       // 重启后强制暂停：用户必须主动按播放键，避免冷启动突然出声
       _isPlaying = false;
