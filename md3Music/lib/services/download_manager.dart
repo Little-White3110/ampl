@@ -41,7 +41,7 @@ class DownloadManager {
 
     try {
       await ensureDir(downloadDir);
-      final filePath = await _buildFilePath(downloadDir, task);
+      var filePath = await _buildFilePath(downloadDir, task);
 
       await _dio.download(
         task.downloadUrl,
@@ -57,6 +57,8 @@ class DownloadManager {
         },
       );
 
+      // 检测实际音频格式，修正文件扩展名（URL 中的扩展名可能与实际内容不符）
+      filePath = await _fixFileExtension(filePath);
       final completedTask = task.copyWith(
         localPath: filePath,
         status: DownloadStatus.completed,
@@ -160,6 +162,71 @@ class DownloadManager {
       if (i > 9999) break;
     }
     return path;
+  }
+
+  /// 读取文件头 magic bytes 检测实际音频格式，若扩展名不匹配则重命名。
+  /// 解决 URL 中扩展名与实际内容不符导致的双后缀（如 .mp3.flac）问题。
+  Future<String> _fixFileExtension(String filePath) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) return filePath;
+
+      final bytes = await file.openRead(0, 12).first;
+      if (bytes.length < 4) return filePath;
+
+      // 检测实际格式
+      String? actualExt;
+      if (bytes.length >= 4 &&
+          bytes[0] == 0x66 && bytes[1] == 0x4C &&
+          bytes[2] == 0x61 && bytes[3] == 0x43) {
+        actualExt = 'flac'; // fLaC
+      } else if (bytes.length >= 3 &&
+          bytes[0] == 0x49 && bytes[1] == 0x44 && bytes[2] == 0x33) {
+        actualExt = 'mp3'; // ID3
+      } else if (bytes.length >= 4 &&
+          bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0) {
+        actualExt = 'mp3'; // MPEG sync word
+      } else if (bytes.length >= 4 &&
+          bytes[0] == 0x4F && bytes[1] == 0x67 &&
+          bytes[2] == 0x67 && bytes[3] == 0x53) {
+        actualExt = 'ogg'; // OggS
+      } else if (bytes.length >= 4 &&
+          bytes[0] == 0x66 && bytes[1] == 0x74 &&
+          bytes[2] == 0x79 && bytes[3] == 0x70) {
+        actualExt = 'm4a'; // ftyp (MP4/M4A)
+      }
+
+      if (actualExt == null) return filePath;
+
+      // 检查当前扩展名是否正确
+      final dotIdx = filePath.lastIndexOf('.');
+      if (dotIdx < 0) return filePath;
+      final currentExt = filePath.substring(dotIdx + 1).toLowerCase();
+
+      // 扩展名已正确，无需修改
+      if (currentExt == actualExt) return filePath;
+
+      // 替换扩展名（处理双后缀情况如 .mp3.flac → .flac）
+      // 先去掉所有已知音频扩展名后缀
+      var baseName = filePath;
+      final knownExts = ['mp3', 'flac', 'aac', 'ogg', 'wav', 'm4a'];
+      // 从末尾剥离已知扩展名（最多剥两层，处理双后缀）
+      for (var i = 0; i < 2; i++) {
+        final idx = baseName.lastIndexOf('.');
+        if (idx < 0) break;
+        final ext = baseName.substring(idx + 1).toLowerCase();
+        if (knownExts.contains(ext)) {
+          baseName = baseName.substring(0, idx);
+        } else {
+          break;
+        }
+      }
+      final newPath = '$baseName.$actualExt';
+      await file.rename(newPath);
+      return newPath;
+    } catch (e) {
+      return filePath;
+    }
   }
 
   /// 过滤文件系统非法字符（Windows / Android 通用）：`\ / : * ? " < > |`

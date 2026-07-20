@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 /// 元数据写入客户端：通过 MethodChannel 调用原生 JAudioTagger，
@@ -22,7 +23,6 @@ class MetadataWriter {
   /// - [lyrics]：LRC 文本（可选；传入则嵌入 USLT / LYRICS）
   ///
   /// 返回 true 表示写入成功；false 表示失败（原生抛异常或返回 error）。
-  /// 任何异常都被吞掉返回 false，调用方不需要 try/catch。
   static Future<bool> writeMetadata({
     required String filePath,
     required String title,
@@ -32,6 +32,7 @@ class MetadataWriter {
     String? lyrics,
   }) async {
     try {
+      debugPrint('[MetadataWriter] calling writeMetadata for: $filePath');
       final r = await _channel.invokeMethod<bool>('writeMetadata', {
         'filePath': filePath,
         'title': title,
@@ -40,12 +41,14 @@ class MetadataWriter {
         if (artworkPath != null) 'artworkPath': artworkPath,
         if (lyrics != null) 'lyrics': lyrics,
       });
+      debugPrint('[MetadataWriter] native returned: $r');
       return r ?? false;
-    } on PlatformException catch (_) {
-      // 原生端写标签失败（文件不存在 / 格式不支持 / IO 错误等）
+    } on PlatformException catch (e) {
+      debugPrint('[MetadataWriter] PlatformException: code=${e.code}, '
+          'message=${e.message}, details=${e.details}');
       return false;
-    } catch (_) {
-      // MethodChannel 通信异常
+    } catch (e) {
+      debugPrint('[MetadataWriter] unexpected error: $e');
       return false;
     }
   }

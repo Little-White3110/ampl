@@ -73,7 +73,12 @@ class MetadataWriterPlugin {
         val lyrics = call.argument<String>("lyrics")
 
         val file = File(filePath)
+        android.util.Log.d("MetadataWriter", "▶ writeMetadata filePath=$filePath exists=${file.exists()} size=${file.length()}")
+        android.util.Log.d("MetadataWriter", "  title=$title artist=$artist album=$album")
+        android.util.Log.d("MetadataWriter", "  artworkPath=$artworkPath lyricsLen=${lyrics?.length ?: 0}")
+
         if (!file.exists()) {
+            android.util.Log.e("MetadataWriter", "❌ FILE_NOT_FOUND: $filePath")
             result.error("FILE_NOT_FOUND", "audio file not found: $filePath", null)
             return
         }
@@ -86,8 +91,11 @@ class MetadataWriterPlugin {
                 // 不同版本 API 略有差异，吞掉
             }
 
+            android.util.Log.d("MetadataWriter", "  reading audio file...")
             val audioFile = AudioFileIO.read(file)
+            android.util.Log.d("MetadataWriter", "  audioFile type=${audioFile.javaClass.simpleName} audioHeader=${audioFile.audioHeader}")
             val tag = audioFile.tagOrCreateAndSetDefault
+            android.util.Log.d("MetadataWriter", "  tag type=${tag.javaClass.simpleName}")
 
             if (title.isNotEmpty()) {
                 tag.setField(FieldKey.TITLE, title)
@@ -102,24 +110,30 @@ class MetadataWriterPlugin {
             // 写入专辑封面（MP3 → APIC，FLAC → METADATA_BLOCK_PICTURE）
             if (!artworkPath.isNullOrEmpty()) {
                 val artFile = File(artworkPath)
+                android.util.Log.d("MetadataWriter", "  artwork exists=${artFile.exists()} size=${artFile.length()}")
                 if (artFile.exists()) {
                     val artwork = ArtworkFactory.createArtworkFromFile(artFile)
                     // 先删除旧封面避免重复（部分格式 createField 会叠加）
                     try { tag.deleteArtworkField() } catch (_: Throwable) {}
                     tag.setField(artwork)
+                    android.util.Log.d("MetadataWriter", "  artwork set OK")
                 }
             }
 
             // 写入歌词（MP3 → USLT，FLAC → LYRICS）
             if (!lyrics.isNullOrEmpty()) {
                 tag.setField(FieldKey.LYRICS, lyrics)
+                android.util.Log.d("MetadataWriter", "  lyrics set OK")
             }
 
+            android.util.Log.d("MetadataWriter", "  committing...")
             audioFile.commit()
+            android.util.Log.d("MetadataWriter", "✅ commit success")
             result.success(true)
         } catch (e: Exception) {
+            android.util.Log.e("MetadataWriter", "❌ WRITE_FAILED", e)
             // 写入失败不阻断下载流程，Dart 端 fallback 处理
-            result.error("WRITE_FAILED", e.message, null)
+            result.error("WRITE_FAILED", "${e.javaClass.simpleName}: ${e.message}", e.stackTraceToString())
         }
     }
 }
